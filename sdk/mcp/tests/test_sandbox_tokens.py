@@ -67,7 +67,7 @@ def test_tokens_are_per_call(name, requests):
         elif name == 'wait_for_text':
             assert json.loads(request.content)['timeout_secs'] == 5
         elif name == 'eval_code':
-            assert json.loads(request.content) == {'code': '2+2'}
+            assert json.loads(request.content) == {'code': '2+2', 'timeout_secs': 30}
     if name == 'wait_for_text':
         assert len(requests) == 5
     server.list_sandboxes()

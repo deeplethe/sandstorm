@@ -1,8 +1,12 @@
 # Sandstorm HTTP API (v1)
 
 The master serves this API over TLS on `127.0.0.1:8080` by default (`--bind`).
-Clients verify it against the deployment's `ca.pem`. Every route needs the API
-token unless this page says otherwise; the token is in
+Clients verify it against the deployment's `ca.pem`, which is
+[`GET /ca.pem`](#get-capem) when you do not have the file. Its certificate names
+`127.0.0.1`, `localhost` and the `--bind` address. Add any other name clients
+or a node's `--master-url` use with `--tls-san`, which can be repeated, or they
+will refuse it. Every
+route needs the API token unless this page says otherwise; the token is in
 `/var/lib/sandstorm/pki/api-token`.
 
 ```http
@@ -19,6 +23,7 @@ The official E2B SDKs use a separate listener, with `--e2b-bind` and
 | Route | What it does |
 |---|---|
 | `GET /healthz` | Liveness probe, no token |
+| `GET /ca.pem` | The deployment's CA certificate, no token |
 | `GET /metrics` | Prometheus metrics |
 | `GET /v1/nodes`, `POST /v1/nodes` | List nodes, take over a listening one |
 | `POST /v1/node-tokens`, `POST /v1/node-bootstrap` | Let a node join by dialling the master |
@@ -43,6 +48,19 @@ and may change. So are `/v1/node/{poll,traffic,result}`, which nodes use.
 ### GET /healthz
 
 Answers `ok` with a 200. It needs no token, so a load balancer can probe it.
+
+### GET /ca.pem
+
+The deployment's CA certificate, as PEM. It needs no token, because a client that
+does not have it yet cannot verify the connection it would send one over. So the
+first fetch is unverified:
+
+```bash
+curl -k https://master:8080/ca.pem -o ca.pem
+```
+
+Check it before you trust it: `ca_fingerprint` from `POST /v1/node-bootstrap`, and
+the start of a registration token, are its SHA-256.
 
 ### GET /metrics
 
@@ -366,8 +384,9 @@ image, so a fork from the tag cannot race ahead of it.
 { "tag": "checkpoint-1" }
 ```
 
-`tag` is a plain name: no slashes, no leading dots. The fields `mode`, `live`,
-`wait`, `diff` and `measure_diff` were removed in v0.6.
+`tag` is required, and is a plain name: no slashes, no leading dots. The fields
+`mode`, `live`, `wait`, `diff` and `measure_diff` were removed in v0.6. Only
+`"mode": "full"` is still accepted, since that is what a branch is.
 
 | Status | Meaning |
 |---|---|

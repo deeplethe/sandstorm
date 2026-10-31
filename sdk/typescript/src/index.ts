@@ -5,12 +5,12 @@
  * ```ts
  * import { Controller, Sandbox } from '@deeplethe/sandstorm';
  *
- * const ctrl = new Controller({ baseUrl: 'http://127.0.0.1:8889' });
- * const snapshots = await ctrl.listSnapshots();
+ * const ctrl = new Controller({ baseUrl: 'https://127.0.0.1:8080', caFile: 'ca.pem' });
+ * const templates = await ctrl.listTemplates();
  *
- * // Spawn + run + cleanup in one go:
+ * // Create + run + cleanup in one go:
  * const out = await Sandbox.with(
- *   { snapshotTag: 'python-3-12-slim' },
+ *   { template: 'python' },
  *   async (sb) => sb.exec(['python3', '-c', 'print(2+2)']),
  * );
  * console.log(out.stdout); // "4\n"
@@ -23,16 +23,18 @@ export {
   ControllerError,
   SANDBOX_TOKEN_HEADER,
   type ControllerOptions,
+  type CreateOptions,
 } from "./controller.js";
 export { Sandbox } from "./sandbox.js";
 export type {
-  BranchMode,
   BranchOptions,
   EvalResult,
   ExecOptions,
   ExecResult,
   PingResult,
   SandboxInfo,
+  SnapshotDetail,
   SnapshotInfo,
   SpawnOptions,
+  Tier,
 } from "./types.js";

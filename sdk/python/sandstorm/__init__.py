@@ -16,7 +16,6 @@ surfaces:
 
 from .controller import (
     SANDBOX_TOKEN_HEADER,
-    BranchMode,
     Controller,
     ControllerError,
 )
@@ -28,6 +27,5 @@ __all__ = [
     "CommandResult",
     "Controller",
     "ControllerError",
-    "BranchMode",
     "SANDBOX_TOKEN_HEADER",
 ]

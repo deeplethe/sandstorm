@@ -6,14 +6,17 @@ from mcp.client.stdio import stdio_client
 
 EXPECTED_TOOLS = {
     "branch_sandbox",
+    "delete_snapshot",
     "eval_code",
     "exec_command",
     "get_sandbox",
     "kill_sandbox",
     "list_sandboxes",
     "list_snapshots",
+    "list_templates",
     "ping_sandbox",
     "spawn_sandboxes",
+    "touch_sandbox",
     "wait_for_text",
 }
 

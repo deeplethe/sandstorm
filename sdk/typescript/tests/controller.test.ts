@@ -36,109 +36,124 @@ describe("Controller", () => {
     expect((calls[0]!.init as RequestInit).method).toBe("GET");
   });
 
-  it("spawnSandboxes serializes camelCase → snake_case", async () => {
+  it("createSandbox starts from a template, and sends nothing unasked", async () => {
+    const { fetch: f, calls } = mockFetch([{ status: 201, body: { id: "sb-1", token: "t" } }]);
+    const c = new Controller({ fetch: f });
+    const sb = await c.createSandbox({ template: "python" });
+    expect(sb.token).toBe("t");
+    expect(calls[0]!.url).toMatch(/\/v1\/sandboxes$/);
+    expect(JSON.parse((calls[0]!.init as RequestInit).body as string)).toEqual({ template: "python" });
+  });
+
+  it("createSandbox serializes camelCase → snake_case", async () => {
+    const { fetch: f, calls } = mockFetch([{ status: 201, body: { id: "sb-1" } }]);
+    const c = new Controller({ fetch: f });
+    await c.createSandbox({
+      snapshotTag: "py",
+      id: "mine",
+      pool: "default",
+      nodeId: "f3",
+      backend: "gvisor",
+      port: 8000,
+      volume: "data",
+      memoryLimitMib: 512,
+    });
+    expect(JSON.parse((calls[0]!.init as RequestInit).body as string)).toEqual({
+      snapshot_tag: "py",
+      id: "mine",
+      pool: "default",
+      node_id: "f3",
+      backend: "gvisor",
+      port: 8000,
+      volume: "data",
+      memory_limit_mib: 512,
+    });
+  });
+
+  it("spawnSandboxes asks for a list, from a tag or a template", async () => {
     const { fetch: f, calls } = mockFetch([
       { status: 201, body: [{ id: "sb-1", snapshot_tag: "py" }] },
+      { status: 201, body: [{ id: "sb-2" }] },
     ]);
     const c = new Controller({ fetch: f });
-    await c.spawnSandboxes({
-      snapshotTag: "py",
-      n: 3,
-      perChildNetns: true,
-      memoryLimitMib: 512,
-      prewarm: true,
-    });
-    const init = calls[0]!.init as RequestInit;
-    const body = JSON.parse(init.body as string);
-    expect(body).toEqual({
+    await c.spawnSandboxes({ snapshotTag: "py", n: 3, perChildNetns: true, memoryLimitMib: 512 });
+    await c.spawnSandboxes({ template: "python" });
+    expect(JSON.parse((calls[0]!.init as RequestInit).body as string)).toEqual({
       snapshot_tag: "py",
       n: 3,
       per_child_netns: true,
       memory_limit_mib: 512,
-      prewarm: true,
+    });
+    expect(JSON.parse((calls[1]!.init as RequestInit).body as string)).toEqual({
+      template: "python",
+      n: 1,
+      per_child_netns: false,
     });
   });
 
-  it("branchSandbox passes diff option through", async () => {
+  it("branchSandbox sends the tag and nothing else", async () => {
     const { fetch: f, calls } = mockFetch([
-      { status: 201, body: { tag: "b1", dir: "/x", created_at_unix: 1 } },
+      { status: 201, body: { tag: "b1", dir: "tags/b1", created_at_unix: 1 } },
     ]);
     const c = new Controller({ fetch: f });
-    await c.branchSandbox("sb-1", { tag: "b1", diff: true });
-    const body = JSON.parse(
-      (calls[0]!.init as RequestInit).body as string,
-    );
-    expect(body).toEqual({ tag: "b1", diff: true });
+    await c.branchSandbox("sb-1", { tag: "b1" });
+    expect((calls[0]!.init as RequestInit).method).toBe("POST");
+    expect(calls[0]!.url).toMatch(/\/v1\/sandboxes\/sb-1\/branch$/);
+    expect(JSON.parse((calls[0]!.init as RequestInit).body as string)).toEqual({ tag: "b1" });
   });
 
-  it("branchSandbox passes mode=live through", async () => {
-    const { fetch: f, calls } = mockFetch([
-      { status: 201, body: { tag: "b2", dir: "/x", created_at_unix: 1 } },
+  it("reaches the other routes", async () => {
+    const replies = Array.from({ length: 5 }, () => ({ status: 200, body: {} }));
+    const { fetch: f, calls } = mockFetch(replies);
+    const c = new Controller({ baseUrl: "http://x", fetch: f });
+    await c.listTemplates();
+    await c.getSnapshot("a/b");
+    await c.touchSandbox("sb-1");
+    await c.setSandboxTier("sb-1", "snapshot");
+    await c.retrySandbox("sb-1");
+    expect(calls.map((call) => `${(call.init as RequestInit).method} ${call.url}`)).toEqual([
+      "GET http://x/v1/templates",
+      "GET http://x/v1/snapshots/a%2Fb/info",
+      "POST http://x/v1/sandboxes/sb-1/touch",
+      "POST http://x/v1/sandboxes/sb-1/tier",
+      "POST http://x/v1/sandboxes/sb-1/retry",
     ]);
-    const c = new Controller({ fetch: f });
-    await c.branchSandbox("sb-1", { mode: "live" });
-    const body = JSON.parse(
-      (calls[0]!.init as RequestInit).body as string,
-    );
-    expect(body).toEqual({ mode: "live" });
+    expect(JSON.parse((calls[3]!.init as RequestInit).body as string)).toEqual({ tier: "snapshot" });
   });
 
-  it("branchSandbox sends wait=false only when explicitly false", async () => {
-    const { fetch: f, calls } = mockFetch([
-      { status: 201, body: { tag: "b3", dir: "/x", created_at_unix: 1 } },
-    ]);
+  it("evalCode sends its time limit", async () => {
+    const { fetch: f, calls } = mockFetch([{ status: 200, body: { result: "4\n", exit_code: 0 } }]);
     const c = new Controller({ fetch: f });
-    await c.branchSandbox("sb-1", { mode: "live", wait: false });
-    const body = JSON.parse(
-      (calls[0]!.init as RequestInit).body as string,
-    );
-    expect(body).toEqual({ mode: "live", wait: false });
+    await c.evalCode("sb-1", "print(2+2)", "t", 90);
+    expect(JSON.parse((calls[0]!.init as RequestInit).body as string)).toEqual({
+      code: "print(2+2)",
+      timeout_secs: 90,
+    });
   });
 
-  it("branchSandbox omits wait field when default true", async () => {
-    // wait: true is the daemon default; omitting it keeps the body
-    // minimal so the call still works against pre-v0.4 daemons that
-    // don't know the field.
-    const { fetch: f, calls } = mockFetch([
-      { status: 201, body: { tag: "b4", dir: "/x", created_at_unix: 1 } },
-    ]);
-    const c = new Controller({ fetch: f });
-    await c.branchSandbox("sb-1", { mode: "live", wait: true });
-    const body = JSON.parse(
-      (calls[0]!.init as RequestInit).body as string,
-    );
-    expect(body).toEqual({ mode: "live" });
-  });
+  describe("waiting as long as the master may take", () => {
+    // Whatever timer the request set, without waiting for it.
+    async function timerFor(call: (c: Controller) => Promise<unknown>) {
+      const set = vi.spyOn(globalThis, "setTimeout");
+      const { fetch: f } = mockFetch([{ status: 200, body: {} }]);
+      await call(new Controller({ fetch: f, timeoutMs: 60_000 }));
+      const delay = set.mock.calls[0]![1];
+      set.mockRestore();
+      return delay;
+    }
 
-  it("branchSandbox prefers mode over legacy diff when both set", async () => {
-    // The daemon rejects both with 400, but the SDK serializes only
-    // `mode` so a caller mid-migration doesn't accidentally hit that
-    // 400 — `mode` wins.
-    const { fetch: f, calls } = mockFetch([
-      { status: 201, body: { tag: "b5", dir: "/x", created_at_unix: 1 } },
-    ]);
-    const c = new Controller({ fetch: f });
-    await c.branchSandbox("sb-1", { mode: "diff", diff: true });
-    const body = JSON.parse(
-      (calls[0]!.init as RequestInit).body as string,
-    );
-    expect(body).toEqual({ mode: "diff" });
-  });
+    it("keeps the default for a short call", async () => {
+      expect(await timerFor((c) => c.listSnapshots())).toBe(60_000);
+      expect(await timerFor((c) => c.execCommand("sb-1", ["true"]))).toBe(60_000);
+    });
 
-  it("spawnSandboxes passes liveFork as snake_case live_fork", async () => {
-    const { fetch: f, calls } = mockFetch([
-      { status: 201, body: [{ id: "sb-1", snapshot_tag: "py" }] },
-    ]);
-    const c = new Controller({ fetch: f });
-    await c.spawnSandboxes({ snapshotTag: "py", liveFork: true });
-    const body = JSON.parse(
-      (calls[0]!.init as RequestInit).body as string,
-    );
-    expect(body).toEqual({
-      snapshot_tag: "py",
-      n: 1,
-      per_child_netns: false,
-      live_fork: true,
+    it("outlasts a long exec or eval, which the master holds for 20 s more", async () => {
+      expect(await timerFor((c) => c.execCommand("sb-1", ["true"], { timeoutSecs: 120 }))).toBe(145_000);
+      expect(await timerFor((c) => c.evalCode("sb-1", "1", "t", 120))).toBe(145_000);
+    });
+
+    it("outlasts a branch, which the master gives up on at 180 s", async () => {
+      expect(await timerFor((c) => c.branchSandbox("sb-1", { tag: "t" }))).toBe(185_000);
     });
   });
 
@@ -183,6 +198,16 @@ describe("Controller", () => {
     } finally {
       if (orig === undefined) delete process.env.SANDSTORM_URL;
       else process.env.SANDSTORM_URL = orig;
+    }
+  });
+
+  it("defaults to where a master listens", () => {
+    const orig = process.env.SANDSTORM_URL;
+    delete process.env.SANDSTORM_URL;
+    try {
+      expect(new Controller().baseUrl).toBe("https://127.0.0.1:8080");
+    } finally {
+      if (orig !== undefined) process.env.SANDSTORM_URL = orig;
     }
   });
 

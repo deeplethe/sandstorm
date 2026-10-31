@@ -146,7 +146,9 @@ class Sandbox:
             self.id, code, sandbox_token=self.token, timeout_secs=self.timeout
         )
         if resp.get("error") is not None:
-            raise RuntimeError(f"sandstorm eval: {resp['error']}")
+            raise RuntimeError(
+                f"sandstorm eval (exit {resp.get('exit_code')}): {resp['error']}"
+            )
         return resp.get("result", "")
 
     def ping(self) -> dict:

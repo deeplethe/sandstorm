@@ -120,6 +120,8 @@ scripts/fleet.sh seed     # put a template on each node
 scripts/fleet.sh verify   # start one sandbox and check it runs
 ```
 
+A client on another machine verifies the name it connects to, and the master's certificate names only `127.0.0.1`, `localhost` and its `--bind` address. Add yours with `--tls-san master`, which can be repeated.
+
 **A node that is already installed** listens with `SANDSTORM_LISTEN=0.0.0.0:80`. On first start it writes a pairing code to `/var/lib/sandstorm/pki/node/pairing-code`. Give the master its address and that code, with the master's CA and API token from its `/var/lib/sandstorm/pki`:
 
 ```bash

@@ -34,22 +34,10 @@ import os
 import ssl
 import urllib.error
 import urllib.request
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
-BranchMode = Literal["full", "diff", "live"]
-"""Canonical BRANCH mode selector (Phase 7.1+).
-
-- ``"full"`` — copy entire guest RAM under pause (default for v0.x).
-- ``"diff"`` — Firecracker Diff snapshot (v0.3+). Sub-second pause for
-  idle sources; replaces the legacy ``diff=True`` boolean.
-- ``"live"`` — UFFD_WP-based live BRANCH (v0.4+). Source pause drops to
-  sub-50 ms; memory streams from the running parent. Requires the
-  source to have been spawned with ``live_fork=True``.
-
-``"diff"`` and ``"live"`` are v0.5 (Firecracker) modes. A v0.6 master
-has no diff snapshots and refuses ``"live"`` with 410 Gone.
-"""
-
+#: The master answers 504 when a node takes longer than 180 s to branch.
+_BRANCH_TIMEOUT = 185.0
 
 #: Header carrying a sandbox's own access token (RFC 16.5 layer two).
 SANDBOX_TOKEN_HEADER = "X-Sandstorm-Sandbox-Token"
@@ -83,8 +71,8 @@ class Controller:
     token:
         The master's API token. Defaults to ``$SANDSTORM_TOKEN``.
     timeout:
-        Per-request timeout in seconds. Branching can take 0.5-8 s on
-        a large parent VM; default is generous.
+        Per-request timeout in seconds. Exec, eval and branch wait longer
+        when the master may legitimately take longer.
     ca_file:
         PEM bundle to verify an ``https://`` master against. Defaults to
         ``$SANDSTORM_CA``.
@@ -127,6 +115,12 @@ class Controller:
             # issuer that should be able to sign for it.
             self._ssl_context = ssl.create_default_context(cafile=self.ca_file)
 
+    # --- templates ------------------------------------------------
+
+    def list_templates(self) -> list[str]:
+        """``GET /v1/templates`` — the names of the registered templates."""
+        return self._request("GET", "/v1/templates")
+
     # --- snapshots ------------------------------------------------
 
     def list_snapshots(self) -> list[dict]:
@@ -167,41 +161,12 @@ class Controller:
         n: int = 1,
         per_child_netns: bool = False,
         memory_limit_mib: Optional[int] = None,
-        prewarm: bool = False,
-        live_fork: bool = False,
-        hugepages: bool = False,
     ) -> list[dict]:
         """``POST /v1/sandboxes`` — fork N children from a snapshot tag.
 
-        Parameters
-        ----------
-        prewarm:
-            When true, each child performs a throwaway snapshot to
-            scratch storage immediately after restore to fault-in all
-            guest pages. Trades ~170 ms / 512 MiB of extra spawn time
-            for steady-state BRANCH latency on the first user-visible
-            BRANCH (avoids the 2-9× cold-cache penalty documented in
-            ``bench/pause-window/RESULTS-v0.2.md`` in the v0.5.3 tag).
-        live_fork:
-            v0.4 to v0.5 only; a v0.6 master refuses ``True`` with
-            410 Gone. Boot the sandbox with a memfd-backed RAM region so
-            later BRANCHes from it can use ``mode="live"`` (UFFD_WP).
-            Requires kernel 5.7+ and the vendored Firecracker fork
-            described in ``docs/VENDORED-FIRECRACKER.md`` in the v0.5.3
-            tag. No effect at spawn time beyond the backend swap; cost
-            shows up on the first live BRANCH.
-        hugepages:
-            v0.4 to v0.5 only, refused by v0.6 like ``live_fork``.
-            Back the memfd with 2 MiB hugepages
-            (``MFD_HUGETLB | MFD_HUGE_2MB``). Only meaningful with
-            ``live_fork=True``. Reduces TLB pressure during spawn-many
-            and live BRANCH bulk-copy. Requires non-zero
-            ``HugePages_Free`` in ``/proc/meminfo`` — ``sandstorm doctor``
-            checks availability. Falls back to normal 4 KiB pages with
-            a warning if the pool is exhausted.
-
-        Returns the list of SandboxInfo dicts (id, snapshot_tag, netns,
-        guest_addr, created_at_unix, pid, memory_limit_mib).
+        ``per_child_netns`` is accepted and ignored: every sandbox has its own
+        network namespace. Each child carries its ``token`` this one time.
+        ``ip`` and ``guest_addr`` are absent until a node reports it running.
         """
         body: dict[str, Any] = {
             "snapshot_tag": snapshot_tag,
@@ -210,12 +175,6 @@ class Controller:
         }
         if memory_limit_mib is not None:
             body["memory_limit_mib"] = memory_limit_mib
-        if prewarm:
-            body["prewarm"] = True
-        if live_fork:
-            body["live_fork"] = True
-        if hugepages:
-            body["hugepages"] = True
         return self._request("POST", "/v1/sandboxes", body)
 
     def list_sandboxes(self) -> list[dict]:
@@ -230,67 +189,27 @@ class Controller:
         """``DELETE /v1/sandboxes/:id`` — terminate one sandbox."""
         self._request("DELETE", f"/v1/sandboxes/{sandbox_id}")
 
-    def branch_sandbox(
-        self,
-        sandbox_id: str,
-        tag: Optional[str] = None,
-        diff: bool = False,
-        measure_diff: bool = False,
-        mode: Optional[BranchMode] = None,
-        wait: bool = True,
-    ) -> dict:
-        """``POST /v1/sandboxes/:id/branch`` — pause + snapshot + resume.
+    def touch_sandbox(self, sandbox_id: str) -> dict:
+        """``POST /v1/sandboxes/:id/touch`` — mark it used, which brings it back to hot."""
+        return self._request("POST", f"/v1/sandboxes/{sandbox_id}/touch")
 
-        Parameters
-        ----------
-        mode:
-            v0.4+ canonical selector. ``"full"``, ``"diff"``, or
-            ``"live"``. When set, takes precedence over the legacy
-            ``diff`` boolean — and passing both raises
-            :class:`ControllerError` (HTTP 400). Prefer this over
-            ``diff=`` in new code. See :data:`BranchMode`.
-        diff:
-            **Legacy.** Equivalent to ``mode="diff"``; kept so this SDK
-            can drive v0.3.x daemons that don't understand ``mode``.
-            Mutually exclusive with ``mode`` (server-side).
-        measure_diff:
-            v0.3+: measurement-only hook. Take a Diff snapshot inside
-            the existing Full pause to report what diff would have
-            cost, without changing semantics. Mutually exclusive with
-            ``diff`` (daemon returns 400 if both are true).
-        wait:
-            v0.4+, only meaningful with ``mode="live"``. Default
-            ``True`` blocks until the background memory copy finishes
-            and the returned snapshot is ``status="ready"``. Set to
-            ``False`` to return as soon as the source resumes (~10 ms);
-            the snapshot reaches ``status="ready"`` later — poll
-            :meth:`list_snapshots` to detect completion.
+    def branch_sandbox(self, sandbox_id: str, tag: str) -> dict:
+        """``POST /v1/sandboxes/:id/branch`` — checkpoint it into a new tag.
 
-        The source sandbox is paused for the duration of the snapshot
-        write — typically 0.5-8 s for Full, ~200 ms for Diff, sub-50 ms
-        for Live — then resumed. The returned snapshot is independent
-        of the source's lifecycle.
+        ``tag`` is a plain name: no slashes, no leading dots. The parent keeps
+        running after a short pause, and this returns once the node has
+        written the image. The sandbox must be hot: the master answers 409
+        otherwise, and :meth:`touch_sandbox` wakes it.
 
-        Returns a SnapshotInfo dict; pass its ``tag`` to
-        ``spawn_sandboxes`` to fork grandchildren from the branch.
+        Returns a Snapshot dict; pass its ``tag`` to ``spawn_sandboxes`` to
+        fork children from the branch.
         """
-        body: dict[str, Any] = {}
-        if tag is not None:
-            body["tag"] = tag
-        # Prefer canonical `mode` when set; fall back to legacy `diff`
-        # so older daemons keep working unchanged.
-        if mode is not None:
-            body["mode"] = mode
-        elif diff:
-            body["diff"] = True
-        if measure_diff:
-            body["measure_diff"] = True
-        # `wait=True` is the daemon default; only send when the caller
-        # opted into fire-and-forget so the body stays minimal against
-        # daemons that don't recognize the field.
-        if not wait:
-            body["wait"] = False
-        return self._request("POST", f"/v1/sandboxes/{sandbox_id}/branch", body)
+        return self._request(
+            "POST",
+            f"/v1/sandboxes/{sandbox_id}/branch",
+            {"tag": tag},
+            timeout=max(self.timeout, _BRANCH_TIMEOUT),
+        )
 
     def exec_command(
         self,

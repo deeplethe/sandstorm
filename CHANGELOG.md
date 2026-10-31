@@ -64,6 +64,67 @@ The master asks for a destroy until a report no longer lists the sandbox, so a r
 
 A sandbox its node had put to disk to make room still had the rule that refuses connections to a cold sandbox when it came back, and the restore set the guest's clock through that rule. So the wake waited out 2 s, and the clock was not set. The guest is let through as soon as it is running.
 
+### A master can name itself in its certificate
+
+`--tls-san` (`SANDSTORM_TLS_SAN`) adds a name or address to the master's
+certificate, and can be repeated. The certificate named only `127.0.0.1`,
+`localhost` and the `--bind` address, so a client that dialled a master by any
+other name was refused, and one bound to `0.0.0.0` could be verified only from its
+own machine. The same goes for a node's `--master-url`: only its registration is
+pinned, and every later call verifies the name. A master bound to `0.0.0.0` with
+no `--tls-san` now warns.
+
+### A branch refuses every removed `mode`
+
+`mode: "diff"`, or any other value, was ignored, so a caller who asked for a diff
+got a full branch and was not told. Everything but `"full"` now answers 410, as
+`docs/API.md` said. `GET /ca.pem` is documented.
+
+### The packaged service and image listen where a master does
+
+`packaging/systemd/sandstormd.service` and the `Dockerfile` bound port 8889. Both
+now use 8080. The service also no longer passes `--api-token-file
+/etc/sandstorm/api-token`, so its token is in `/var/lib/sandstorm/pki/api-token`
+like any other master's. A host on that unit gets a new token there on restart
+unless the old one is moved.
+
+### The Python `Controller` matches v0.6 too
+
+`branch_sandbox` needs a `tag`. `diff`, `measure_diff`, `mode`, `wait`, `prewarm`,
+`live_fork`, `hugepages` and `BranchMode` are gone, and a branch waits as long as
+the master may take. `list_templates` and `touch_sandbox` are new.
+
+### The TypeScript SDK and the MCP server reach a master at its default address
+
+Both defaulted to `http://127.0.0.1:8889`, where the v0.5 daemon listened. They
+now default to `https://127.0.0.1:8080`, where a master listens, and neither had
+a way to trust the private CA a master signs its certificate with. Both now read
+`SANDSTORM_CA`, as the Python `Controller` does, and the TypeScript `Controller`
+takes `caFile` too. The file replaces the trust store rather than adding to it,
+and there is no way to turn verification off.
+
+They could not start anything on a new master either: both needed a snapshot tag,
+and a tag only comes from branching a sandbox. Both now start from a template.
+`Sandbox.create({ template })` and `ctrl.createSandbox` are new in TypeScript,
+`spawn_sandboxes(template=...)` and `list_templates` in the MCP server, and
+`Sandbox.create` and `spawn_sandboxes` wait until a node reports the sandbox
+running and remove it if it never does. `touch` is new in both, since a branch
+needs a hot sandbox.
+
+This breaks callers. A v0.5 daemon, or a master bound to `127.0.0.1:8889`, needs
+`SANDSTORM_URL` set, and `caFile` with a custom `fetch` throws, since that `fetch`
+would ignore it. The MCP server stops at startup if `SANDSTORM_CA` cannot be read.
+What v0.6 refuses or ignores is gone rather than advertised: `diff`,
+`measure_diff`, `mode`, `wait`, `liveFork`/`live_fork`, `hugepages`, `prewarm` and
+the `BranchMode` type. A branch needs a `tag`. `Sandbox.eval` returns what the
+snippet printed, as a string. MCP `spawn_sandboxes` no longer sends
+`memory_limit_mib=256`, which overrode every template's memory, and takes
+`template` as its first argument. The TypeScript types describe the master's
+responses, so fields such as `pid` and `pause_ms` are gone.
+
+Exec, eval and branch now wait as long as the master may take rather than timing
+out first at 60 s.
+
 ### The Python `Sandbox` talks to the master
 
 `sandstorm.Sandbox` drove the `sandstorm` CLI, which left the tree in v0.6, so

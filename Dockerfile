@@ -48,6 +48,8 @@ RUN groupadd --system sandstorm \
  && chown -R sandstorm:sandstorm /var/lib/sandstorm /var/log/sandstorm
 
 USER sandstorm
-EXPOSE 8889
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/sandstormd", "serve"]
-CMD ["--bind", "0.0.0.0:8889"]
+# Add --tls-san with the name clients use: nothing outside the container can
+# verify this master by its loopback names.
+CMD ["--bind", "0.0.0.0:8080"]

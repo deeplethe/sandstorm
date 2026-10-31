@@ -2201,6 +2201,7 @@ mod branch {
 
         for body in [
             serde_json::json!({ "tag": "x", "mode": "live" }),
+            serde_json::json!({ "tag": "x", "mode": "diff" }),
             serde_json::json!({ "tag": "x", "live": true }),
             serde_json::json!({ "tag": "x", "wait": true }),
         ] {

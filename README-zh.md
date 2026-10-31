@@ -120,6 +120,8 @@ scripts/fleet.sh seed     # 在每个节点放一个模板
 scripts/fleet.sh verify   # 启动一个沙箱，确认真的能跑
 ```
 
+其他机器上的客户端会校验它连接时用的名称，而 master 的证书只包含 `127.0.0.1`、`localhost` 和 `--bind` 地址。用 `--tls-san master` 加上你的名称，这个参数可以重复。
+
 **已经装好的节点**，用 `SANDSTORM_LISTEN=0.0.0.0:80` 监听。第一次启动时它会把配对码写到 `/var/lib/sandstorm/pki/node/pairing-code`。把地址和配对码交给 master，CA 和 API token 用 master 上 `/var/lib/sandstorm/pki` 里的那两个文件：
 
 ```bash

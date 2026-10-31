@@ -2210,10 +2210,13 @@ async fn branch_sandbox(
     Path(id): Path<String>,
     Json(req): Json<BranchReq>,
 ) -> Result<(StatusCode, Json<SnapshotView>), ApiErr> {
-    if req.mode.as_deref() == Some("live") || req.live == Some(true) {
+    // "full" is what a branch is, so it asks for nothing that went away.
+    // Anything else is refused rather than ignored, or a caller who asked
+    // for a diff believes it got one.
+    if req.mode.as_deref().is_some_and(|mode| mode != "full") || req.live == Some(true) {
         return Err(err(
             StatusCode::GONE,
-            "mode=\"live\" is removed in v0.6. A branch is a checkpoint \
+            "mode and live are removed in v0.6. A branch is a checkpoint \
              restored into each child; the parent pauses for about 80 ms. \
              Drop the field for the same call.",
         ));
