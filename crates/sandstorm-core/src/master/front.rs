@@ -35,6 +35,7 @@ use super::e2b::{self, E2b, E2bErr};
 use super::SANDBOX_TOKEN_HEADER;
 use crate::node::PORT_HEADER;
 use crate::proxy;
+use crate::state::now_secs;
 
 /// Where to listen and what as.
 #[derive(Debug, Clone)]
@@ -182,6 +183,26 @@ async fn dispatch(State(f): State<Arc<Front>>, req: Request) -> Response {
 
 /// How long the node's gateway may take to accept a connection.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const TRAFFIC_TOKEN_HEADER: &str = "e2b-traffic-access-token";
+
+fn check_traffic_access(
+    expected: Option<&str>,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), E2bErr> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let presented = headers
+        .get(TRAFFIC_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok());
+    if presented.is_some_and(|token| crate::auth::secrets_match(token, expected)) {
+        return Ok(());
+    }
+    Err(E2bErr(
+        StatusCode::UNAUTHORIZED,
+        "sandbox traffic access token is missing or invalid".into(),
+    ))
+}
 
 async fn forward(
     e: &E2b,
@@ -199,6 +220,22 @@ async fn forward(
         )
     };
     let route = e.route(id)?.ok_or_else(not_found)?;
+    check_traffic_access(route.traffic_access_token.as_deref(), req.headers())?;
+    // Route addresses are cached, but connect/resume can change the deadline.
+    // Read it for each request so an expired auto-pause cannot wake on traffic.
+    let record =
+        e.st.store()
+            .get_e2b(id)
+            .map_err(|err| E2bErr(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let Some((record, _)) = record else {
+        return Err(not_found());
+    };
+    if record.auto_pause && record.end_at <= now_secs() {
+        return Err(E2bErr(
+            StatusCode::BAD_GATEWAY,
+            format!("sandbox {id} is paused; connect to it to resume it"),
+        ));
+    }
 
     let stream = match proxy::connect(route.gateway, CONNECT_TIMEOUT).await {
         Ok(s) => s,
@@ -224,6 +261,7 @@ async fn forward(
     // Whatever the caller sent in these is not theirs to send: the token is
     // what this door adds, and the port is what the Host said.
     e2b::strip_inbound(&mut parts.headers);
+    parts.headers.remove(TRAFFIC_TOKEN_HEADER);
     let token = route.token.parse().map_err(|_| {
         E2bErr(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -414,3 +452,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "front_traffic_tests.rs"]
+mod traffic_tests;
