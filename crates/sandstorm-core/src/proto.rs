@@ -320,7 +320,7 @@ impl Egress {
             ));
         }
         let list = |l: Vec<String>| {
-            let mut out: Vec<String> = Vec::with_capacity(l.len());
+            let mut out: Vec<String> = Vec::new();
             for entry in l {
                 let c = canonical_cidr(&entry)?;
                 if !out.contains(&c) {
