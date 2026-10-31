@@ -102,15 +102,16 @@ PVM 上两边的 warm 启动基本持平：web 和 64 MiB 应用，Sandstorm 是
 
 ## 快速开始
 
-需要 Linux 和 cgroup v2，`PATH` 里要有 [`runsc`](https://gvisor.dev/docs/user_guide/install/)，编译需要 Rust。
+需要 Linux 和 cgroup v2，`PATH` 里要有 [`runsc`](https://gvisor.dev/docs/user_guide/install/)，编译需要 Rust，面板需要 Node 22.12 或更新版本。
 
 ```bash
 git clone https://github.com/deeplethe/sandstorm.git && cd sandstorm
+npm --prefix web/console ci && npm --prefix web/console run build
 cargo build --release -p sandstorm-core
 sudo ./target/release/sandstormd serve --master --node
 ```
 
-这样会在一个进程里同时跑 master 和节点，面板在 `https://127.0.0.1:8080`，API token 在 `/var/lib/sandstorm/pki/api-token`。沙箱从模板启动，模板是一个 rootfs 加一份 OCI spec，用 `POST /v1/templates` 注册；最小的例子见 `scripts/fleet.sh seed`。
+这样会在一个进程里同时跑 master 和节点。打开面板 `https://127.0.0.1:8080`，浏览器会提示证书来自私有 CA，继续访问；用 `/var/lib/sandstorm/pki/api-token` 里的 token 登录，点 **+ From an image** 建一个模板，再从它启动沙箱。
 
 **多台能 ssh 上去的机器组成集群：**
 
@@ -120,22 +121,11 @@ scripts/fleet.sh seed     # 在每个节点放一个模板
 scripts/fleet.sh verify   # 启动一个沙箱，确认真的能跑
 ```
 
-其他机器上的客户端会校验它连接时用的名称，而 master 的证书只包含 `127.0.0.1`、`localhost` 和 `--bind` 地址。用 `--tls-san master` 加上你的名称，这个参数可以重复。
-
-**已经装好的节点**，用 `SANDSTORM_LISTEN=0.0.0.0:80` 监听。第一次启动时它会把配对码写到 `/var/lib/sandstorm/pki/node/pairing-code`。把地址和配对码交给 master，CA 和 API token 用 master 上 `/var/lib/sandstorm/pki` 里的那两个文件：
-
-```bash
-curl --cacert ca.pem -H "Authorization: Bearer $(cat api-token)" -H 'Content-Type: application/json' \
-  https://master:8080/v1/nodes -d '{"address": "10.0.0.5", "pairing_code": "<配对码>"}'
-```
-
-配对码重启后不变，拿到它就能在那个节点上执行任何操作，请像 root 密码一样保管。
-
-HTTP API 见 [docs/API.md](docs/API.md)。集群压测见 [bench/fleet](bench/fleet/README.md)。
+其他机器上的客户端，要用 `--tls-san` 把它连接时用的名称加进 master 的证书。已经装好的节点，或者在 NAT 后只能主动连 master 的节点，按 [API 文档](docs/API.md#nodes)加入。面板能做的事都在 [HTTP API](docs/API.md) 里，集群压测见 [bench/fleet](bench/fleet/README.md)。
 
 ## 状态
 
-v0.6 还没有发布，改动很大：后端从 Firecracker 微虚拟机换成 gVisor，从单机变成集群。最近一次发布是 v0.5.3，那是基于 Firecracker 的 fork 运行时，它的 README 见[那个 tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3)。架构决策记录在 [docs/adr](docs/adr/README.md)（英文）。
+v0.6 还没有发布，改动很大：gVisor 成为默认后端，节点不再需要 KVM；Firecracker 保留为第二后端，按节点选择；从单机变成集群。最近一次发布是 v0.5.3，那是基于 Firecracker 的 fork 运行时，它的 README 见[那个 tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3)。架构决策记录在 [docs/adr](docs/adr/README.md)（英文）。
 
 接下来，来自集群实测发现的问题：
 
@@ -143,7 +133,7 @@ v0.6 还没有发布，改动很大：后端从 Firecracker 微虚拟机换成 g
 - [x] 节点暂缓的创建，在内存空出来后重试，而不是停放；跑起来后清除它的错误状态。
 - [x] 清理死掉的沙箱，连同它的网络；如果还需要它，就重新启动。
 - [ ] master 在分配时预留容量，避免一波突发请求超过节点上次上报的余量。
-- [ ] 同一节点上并行恢复多个 snapshot。
+- [x] 同一节点上并行恢复多个 snapshot。
 
 ## 许可证
 

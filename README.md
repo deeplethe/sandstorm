@@ -102,15 +102,16 @@ Under PVM the two warm starts are level: Sandstorm 52 / 83 ms, CubeSandbox 53 / 
 
 ## Quick start
 
-You need Linux with cgroup v2, [`runsc`](https://gvisor.dev/docs/user_guide/install/) on the `PATH`, and Rust to build.
+You need Linux with cgroup v2, [`runsc`](https://gvisor.dev/docs/user_guide/install/) on the `PATH`, Rust, and Node 22.12 or later for the console.
 
 ```bash
 git clone https://github.com/deeplethe/sandstorm.git && cd sandstorm
+npm --prefix web/console ci && npm --prefix web/console run build
 cargo build --release -p sandstorm-core
 sudo ./target/release/sandstormd serve --master --node
 ```
 
-That runs a master and a node in one process, with the console at `https://127.0.0.1:8080`. The API token is in `/var/lib/sandstorm/pki/api-token`. A sandbox starts from a template, a rootfs plus an OCI spec registered with `POST /v1/templates`; `scripts/fleet.sh seed` shows the smallest one.
+That runs a master and a node in one process. Open the console at `https://127.0.0.1:8080`, past the browser's warning about its private CA, sign in with the token in `/var/lib/sandstorm/pki/api-token`, make a template with **+ From an image**, and start a sandbox from it.
 
 **A fleet** of machines you can ssh to:
 
@@ -120,22 +121,11 @@ scripts/fleet.sh seed     # put a template on each node
 scripts/fleet.sh verify   # start one sandbox and check it runs
 ```
 
-A client on another machine verifies the name it connects to, and the master's certificate names only `127.0.0.1`, `localhost` and its `--bind` address. Add yours with `--tls-san master`, which can be repeated.
-
-**A node that is already installed** listens with `SANDSTORM_LISTEN=0.0.0.0:80`. On first start it writes a pairing code to `/var/lib/sandstorm/pki/node/pairing-code`. Give the master its address and that code, with the master's CA and API token from its `/var/lib/sandstorm/pki`:
-
-```bash
-curl --cacert ca.pem -H "Authorization: Bearer $(cat api-token)" -H 'Content-Type: application/json' \
-  https://master:8080/v1/nodes -d '{"address": "10.0.0.5", "pairing_code": "<code>"}'
-```
-
-The code stays the same across restarts, and whoever holds it can run anything on that node. Keep it like a root password.
-
-The HTTP API is documented in [docs/API.md](docs/API.md). To load-test a fleet, use [bench/fleet](bench/fleet/README.md).
+A client on another machine connects by a name the master's certificate has to list: add it with `--tls-san`. Nodes that are already installed, or that only reach the master from behind NAT, join [as the API describes](docs/API.md#nodes). Everything the console does is in the [HTTP API](docs/API.md), and [bench/fleet](bench/fleet/README.md) load-tests a fleet.
 
 ## Status
 
-v0.6 is not released yet, and it changes a lot: the backend moves from Firecracker microVMs to gVisor, and one host becomes a fleet. The last release, v0.5.3, is the Firecracker fork runtime; its README is [at that tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3). The design decisions are recorded in [docs/adr](docs/adr/README.md).
+v0.6 is not released yet, and it changes a lot: gVisor becomes the default backend, so a node needs no KVM, Firecracker stays as a second backend chosen node by node, and one host becomes a fleet. The last release, v0.5.3, is the Firecracker fork runtime; its README is [at that tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3). The design decisions are recorded in [docs/adr](docs/adr/README.md).
 
 Next, from what the fleet runs found:
 
@@ -143,7 +133,7 @@ Next, from what the fleet runs found:
 - [x] Retry a create the node held back once memory frees, instead of parking it; and clear its error once it runs.
 - [x] Clear away a sandbox that dies, network included, and restart it if it is still wanted.
 - [ ] Reserve capacity on the master as it places, so a burst cannot overshoot a node's last report.
-- [ ] Restore several snapshots in parallel on one node.
+- [x] Restore several snapshots in parallel on one node.
 
 ## License
 
