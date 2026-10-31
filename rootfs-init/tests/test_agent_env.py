@@ -236,5 +236,35 @@ class TestBufferedLineReader(unittest.TestCase):
         self.assertEqual(reader.readline(), b'msg1\n')
         self.assertEqual(reader.readline(), b'msg2\n')
         self.assertEqual(reader.readline(), b'msg3\n')
+class TestBindAddress(unittest.TestCase):
+    """The agent listens on the guest's address, not on every interface."""
+
+    def setUp(self):
+        self.agent, env_path = _load_agent_module()
+        self.addCleanup(os.unlink, env_path)
+
+    def bound(self, cmdline):
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write(cmdline)
+        self.addCleanup(os.unlink, f.name)
+        return self.agent.bind_address(f.name)
+
+    def test_the_address_the_host_boots_a_guest_with(self):
+        got = self.bound(
+            "quiet panic=1 ip=10.42.0.2::10.42.0.1:255.255.255.252::eth0:off sandstorm.app=00\n"
+        )
+        self.assertEqual(got, "10.42.0.2")
+
+    def test_no_network_stays_on_loopback(self):
+        self.assertEqual(self.bound("quiet panic=1\n"), "127.0.0.1")
+
+    def test_an_ip_argument_with_no_address_stays_on_loopback(self):
+        self.assertEqual(self.bound("ip=dhcp\n"), "127.0.0.1")
+        self.assertEqual(self.bound("ip=off\n"), "127.0.0.1")
+
+    def test_an_unreadable_cmdline_stays_on_loopback(self):
+        self.assertEqual(self.agent.bind_address("/no/such/file"), "127.0.0.1")
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
