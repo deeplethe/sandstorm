@@ -40,6 +40,7 @@ tokio-rustls = "0.26"
 tower-layer = "0.3"
 rustls-pki-types = "1"
 sha2 = "0.10"
+tar = "0.4"
 # The scoped token a node presents to fetch a tag from another node.
 hmac = "0.12"
 # Streaming a tag image out of the agent without reading it into memory.

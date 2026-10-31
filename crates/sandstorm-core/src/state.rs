@@ -11,6 +11,7 @@
 //!    re-adopted in 134 ms, because each sandbox lives in its own systemd
 //!    scope rather than as our child.
 
+use crate::proto::Egress;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
@@ -61,6 +62,29 @@ pub struct Sandbox {
     /// denser the node, the more one unbounded sandbox costs everyone on
     /// it.
     pub memory_limit_mib: Option<u64>,
+    /// What it may reach. Resolved at creation, so a later change of the
+    /// cluster's default leaves running sandboxes as they are.
+    pub egress: Egress,
+}
+
+/// A template that comes from a container image.
+#[derive(Debug, Clone)]
+pub struct ImageTemplate {
+    pub name: String,
+    pub image: String,
+    pub attempt: u32,
+    /// As in `templates`; `pending` in it until a pull has reported.
+    pub spec: String,
+}
+
+/// How one node's pull of a template went.
+#[derive(Debug, Clone)]
+pub struct PullRow {
+    pub template: String,
+    pub node_id: String,
+    pub done: bool,
+    /// Why it failed, if it did.
+    pub error: Option<String>,
 }
 
 /// What the E2B surface keeps about a sandbox it created.
@@ -86,6 +110,10 @@ pub struct E2bSandbox {
 
 const E2B_COLS: &str = "id, client_id, template_id, access_token, envd_version, \
                         env_vars, metadata, auto_pause, end_at";
+
+fn egress_json(e: &Egress) -> Option<String> {
+    (*e != Egress::default()).then(|| serde_json::to_string(e).expect("plain strings and a bool"))
+}
 
 fn e2b_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<E2bSandbox> {
     Ok(E2bSandbox {
@@ -257,6 +285,22 @@ impl Store {
 
             -- Short-lived bearer tokens a new node exchanges for a client
             -- certificate. Single use: consumed_at is set on redemption.
+            -- How a template's image pull went on each node.
+            CREATE TABLE IF NOT EXISTS template_pulls (
+                template TEXT NOT NULL,
+                node_id  TEXT NOT NULL,
+                attempt  INTEGER NOT NULL,
+                done     INTEGER NOT NULL,
+                error    TEXT,
+                PRIMARY KEY (template, node_id)
+            );
+
+            -- One row per setting the console can change.
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS node_tokens (
                 token       TEXT PRIMARY KEY,
                 pool        TEXT NOT NULL DEFAULT 'default',
@@ -331,6 +375,12 @@ impl Store {
             "ALTER TABLE sandboxes ADD COLUMN ip TEXT",
             "ALTER TABLE sandboxes ADD COLUMN from_tag TEXT",
             "ALTER TABLE sandboxes ADD COLUMN memory_limit_mib INTEGER",
+            // The image a template is pulled from, and which attempt at it
+            // this is. NULL for one an operator put on the nodes by hand.
+            "ALTER TABLE templates ADD COLUMN image TEXT",
+            "ALTER TABLE templates ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0",
+            // NULL is closed, which is what a sandbox from before this was.
+            "ALTER TABLE sandboxes ADD COLUMN egress TEXT",
             // The branched sandbox's port. Before it, a fork defaulted to
             // 8080 whatever its parent listened on, and a child of one on
             // 8000 never answered.
@@ -765,8 +815,8 @@ impl Store {
             "INSERT INTO sandboxes
                 (id, node_id, pool, template, tier, token, volume, port,
                  created_at, last_active_at, net_index, from_tag,
-                 memory_limit_mib, gateway_port)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                 memory_limit_mib, gateway_port, egress)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 s.id,
                 s.node_id,
@@ -782,6 +832,7 @@ impl Store {
                 s.from_tag,
                 s.memory_limit_mib.map(|v| v as i64),
                 s.gateway_port,
+                egress_json(&s.egress),
             ],
         )?;
         Ok(())
@@ -793,7 +844,7 @@ impl Store {
             .query_row(
                 "SELECT id, node_id, pool, template, tier, token, volume, port,
                         created_at, last_active_at, last_error, error_attempts,
-                    net_index, ip, from_tag, memory_limit_mib, gateway_port
+                    net_index, ip, from_tag, memory_limit_mib, gateway_port, egress
                  FROM sandboxes WHERE id=?1",
                 params![id],
                 Self::row_to_sandbox,
@@ -806,7 +857,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, node_id, pool, template, tier, token, volume, port,
                     created_at, last_active_at, last_error, error_attempts,
-                    net_index, ip, from_tag, memory_limit_mib, gateway_port
+                    net_index, ip, from_tag, memory_limit_mib, gateway_port, egress
              FROM sandboxes ORDER BY created_at",
         )?;
         let rows = stmt
@@ -901,7 +952,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, node_id, pool, template, tier, token, volume, port,
                     created_at, last_active_at, last_error, error_attempts,
-                    net_index, ip, from_tag, memory_limit_mib, gateway_port
+                    net_index, ip, from_tag, memory_limit_mib, gateway_port, egress
              FROM sandboxes WHERE node_id=?1 ORDER BY created_at",
         )?;
         let rows = stmt
@@ -1080,7 +1131,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, node_id, pool, template, tier, token, volume, port,
                     created_at, last_active_at, last_error, error_attempts,
-                    net_index, ip, from_tag, memory_limit_mib, gateway_port
+                    net_index, ip, from_tag, memory_limit_mib, gateway_port, egress
              FROM sandboxes
              WHERE last_active_at <= ?1 AND tier != 'detached'
              ORDER BY last_active_at",
@@ -1118,7 +1169,45 @@ impl Store {
             from_tag: r.get(14)?,
             memory_limit_mib: r.get::<_, Option<i64>>(15)?.map(|v| v as u64),
             gateway_port: r.get::<_, Option<u16>>(16)?,
+            egress: r
+                .get::<_, Option<String>>(17)?
+                .and_then(|v| serde_json::from_str(&v).ok())
+                .unwrap_or_default(),
         })
+    }
+
+    // ---- egress ----------------------------------------------------------
+
+    /// What a new sandbox may reach when nobody says.
+    pub fn default_egress(&self) -> Result<Egress> {
+        let v: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key='default_egress'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v.and_then(|v| serde_json::from_str(&v).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn set_default_egress(&self, e: &Egress) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('default_egress', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![serde_json::to_string(e)?],
+        )?;
+        Ok(())
+    }
+
+    /// Whether there was such a sandbox.
+    pub fn set_sandbox_egress(&self, id: &str, e: &Egress) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE sandboxes SET egress=?2 WHERE id=?1",
+            params![id, egress_json(e)],
+        )?;
+        Ok(n > 0)
     }
 
     // ---- node registration tokens ---------------------------------------
@@ -1253,6 +1342,103 @@ impl Store {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?)
+    }
+
+    /// A template to pull from `image`, or another try at one. `spec` holds
+    /// what the caller asked for until a node reports what the image says.
+    /// Refused, by answering false, for a name that means something else.
+    pub fn put_image_template(&self, name: &str, image: &str, spec: &str) -> Result<bool> {
+        let had: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT image FROM templates WHERE name=?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match had {
+            Some(i) if i.as_deref() != Some(image) => return Ok(false),
+            Some(_) => {
+                self.conn.execute(
+                    "UPDATE templates SET attempt=attempt+1 WHERE name=?1",
+                    params![name],
+                )?;
+                self.conn.execute(
+                    "DELETE FROM template_pulls WHERE template=?1",
+                    params![name],
+                )?;
+            }
+            None => {
+                self.conn.execute(
+                    "INSERT INTO templates (name, rootfs, spec, created_at, image, attempt)
+                     VALUES (?1,'rootfs',?2,?3,?4,1)",
+                    params![name, spec, now_secs(), image],
+                )?;
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn image_templates(&self) -> Result<Vec<ImageTemplate>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, image, attempt, spec FROM templates
+             WHERE image IS NOT NULL ORDER BY name",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(ImageTemplate {
+                    name: r.get(0)?,
+                    image: r.get(1)?,
+                    attempt: r.get(2)?,
+                    spec: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn set_template_spec(&self, name: &str, spec: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE templates SET spec=?2 WHERE name=?1",
+            params![name, spec],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_pull(
+        &self,
+        template: &str,
+        node_id: &str,
+        attempt: u32,
+        done: bool,
+        error: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO template_pulls (template, node_id, attempt, done, error)
+             VALUES (?1,?2,?3,?4,?5)
+             ON CONFLICT(template, node_id) DO UPDATE SET
+                attempt=excluded.attempt, done=excluded.done, error=excluded.error",
+            params![template, node_id, attempt, done, error],
+        )?;
+        Ok(())
+    }
+
+    pub fn template_pulls(&self) -> Result<Vec<PullRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT template, node_id, done, error FROM template_pulls
+             ORDER BY template, node_id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(PullRow {
+                    template: r.get(0)?,
+                    node_id: r.get(1)?,
+                    done: r.get(2)?,
+                    error: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// Name, spec and creation time of every template, for the E2B view.
@@ -1403,6 +1589,7 @@ mod tests {
             ip: None,
             from_tag: None,
             memory_limit_mib: None,
+            egress: Egress::default(),
             gateway_port: None,
         }
     }

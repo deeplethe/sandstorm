@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use sandstorm_core::identity::Ca;
 use sandstorm_core::master::{router, MasterState};
-use sandstorm_core::proto::{ObservedSandbox, PollResponse};
+use sandstorm_core::proto::{
+    Command, Egress, ImageConfig, ObservedSandbox, PollResponse, TemplatePull,
+};
 use sandstorm_core::state::Store;
 use sandstorm_core::tier::Tier;
 use tempfile::TempDir;
@@ -246,7 +248,7 @@ async fn re_adoption_issues_no_commands() {
         .post(format!("{}/v1/node/poll", h.base))
         .json(&serde_json::json!({
             "node_id": "bm-1",
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
         }))
         .send()
@@ -292,7 +294,7 @@ async fn deleting_a_sandbox_makes_the_node_destroy_it() {
         .post(format!("{}/v1/node/poll", h.base))
         .json(&serde_json::json!({
             "node_id": "bm-1",
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
         }))
         .send()
@@ -337,7 +339,7 @@ async fn touching_a_cold_sandbox_promotes_it_straight_to_hot() {
                 .post(format!("{base}/v1/node/poll"))
                 .json(&serde_json::json!({
                     "node_id": "bm-1",
-                    "observed": [ObservedSandbox { id, tier, serving: false, ip: None, net_index: None }],
+                    "observed": [ObservedSandbox { id, tier, serving: false, ip: None, net_index: None, egress: None }],
                     "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
                 }))
                 .send()
@@ -1299,7 +1301,7 @@ mod exec {
                 .post(format!("{base}/v1/node/poll"))
                 .json(&serde_json::json!({
                     "node_id": "bm-1",
-                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None }],
+                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
                     "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
                 }))
                 .send()
@@ -1365,7 +1367,7 @@ mod exec {
                 .post(format!("{base}/v1/node/poll"))
                 .json(&serde_json::json!({
                     "node_id": "bm-1",
-                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None }],
+                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
                     "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
                 }))
                 .send().await.unwrap().json().await.unwrap();
@@ -2199,6 +2201,7 @@ mod branch {
 
         for body in [
             serde_json::json!({ "tag": "x", "mode": "live" }),
+            serde_json::json!({ "tag": "x", "mode": "diff" }),
             serde_json::json!({ "tag": "x", "live": true }),
             serde_json::json!({ "tag": "x", "wait": true }),
         ] {
@@ -2747,6 +2750,7 @@ async fn traffic_at_the_gateway_keeps_a_woken_sandbox_awake() {
                 serving: true,
                 ip: None,
                 net_index: None,
+                egress: None,
             }]
         } else {
             vec![]
@@ -2821,7 +2825,7 @@ async fn traffic_at_the_gateway_keeps_a_woken_sandbox_awake() {
         .post(format!("{}/v1/node/poll", h.base))
         .json(&serde_json::json!({
             "node_id": node,
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Frozen, serving: false, ip: None, net_index: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Frozen, serving: false, ip: None, net_index: None, egress: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
             "traffic": [id],
         }))
@@ -2863,7 +2867,7 @@ async fn a_wake_reported_out_of_turn_is_adopted_at_once() {
         .post(format!("{}/v1/node/traffic", h.base))
         .json(&serde_json::json!({
             "node_id": "bm-1",
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0,
             "traffic": [id],
         }))
@@ -3021,7 +3025,7 @@ async fn a_sandbox_a_node_evicted_is_not_asked_back() {
         let base = h.base.clone();
         let body = serde_json::json!({
             "node_id": from,
-            "observed": [ObservedSandbox { id: id.clone(), tier, serving: tier.is_serving(), ip: None, net_index: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier, serving: tier.is_serving(), ip: None, net_index: None, egress: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
             "evicted": evicted,
         });
@@ -3161,7 +3165,8 @@ async fn a_held_back_create_is_never_given_up_on() {
         tier: Tier::Hot,
         serving: true,
         ip: None,
-        net_index: None
+        net_index: None,
+        egress: None,
     }]);
     poll(up, serde_json::json!([])).await;
     assert!(
@@ -3407,4 +3412,348 @@ async fn a_pools_split_off_host_group_takes_new_sandboxes() {
     let made: serde_json::Value = r.json().await.unwrap();
     assert_eq!(made["node_id"], "bm-2");
     assert_eq!(made["pool"], "default#intel999");
+}
+
+async fn poll_with(h: &Harness, id: &str, egress: Option<Egress>) -> Vec<Command> {
+    let resp: PollResponse = reqwest::Client::new()
+        .post(format!("{}/v1/node/poll", h.base))
+        .json(&serde_json::json!({
+            "node_id": "bm-1",
+            "observed": [ObservedSandbox { id: id.to_string(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress }],
+            "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    resp.commands
+}
+
+/// A sandbox is closed unless someone opened it, and the default decides for
+/// the ones nobody said anything about.
+#[tokio::test]
+async fn the_default_decides_what_a_new_sandbox_may_reach() {
+    let h = start().await;
+    register(&h, "bm-1", "default").await;
+    put_template(&h, "python").await;
+    let c = reqwest::Client::new();
+    let create = |body: serde_json::Value| {
+        let c = c.clone();
+        let url = format!("{}/v1/sandboxes", h.base);
+        async move {
+            c.post(url)
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()
+        }
+    };
+
+    let shut = create(serde_json::json!({ "template": "python" })).await;
+    assert_eq!(shut["egress"]["internet"], false);
+
+    let set = c
+        .post(format!("{}/v1/egress", h.base))
+        .json(&serde_json::json!({ "internet": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(set.status(), 200);
+
+    let open = create(serde_json::json!({ "template": "python" })).await;
+    assert_eq!(open["egress"]["internet"], true);
+    let closed = create(serde_json::json!({ "template": "python", "egress": {} })).await;
+    assert_eq!(closed["egress"]["internet"], false);
+
+    // One already there keeps what it had.
+    let id = shut["id"].as_str().unwrap();
+    let again: serde_json::Value = c
+        .get(format!("{}/v1/sandboxes/{id}", h.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(again["egress"]["internet"], false);
+
+    // And back: closed is a value like any other.
+    let set = c
+        .post(format!("{}/v1/egress", h.base))
+        .json(&serde_json::json!({ "internet": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(set.status(), 200);
+    let shut_again = create(serde_json::json!({ "template": "python" })).await;
+    assert_eq!(shut_again["egress"]["internet"], false);
+}
+
+/// Nodes are told by comparing what they report, so one that restarted and
+/// reports nothing gets its rules back, and one that agrees hears nothing.
+#[tokio::test]
+async fn a_node_is_told_what_a_sandbox_may_reach_until_it_agrees() {
+    let h = start().await;
+    register(&h, "bm-1", "default").await;
+    put_template(&h, "python").await;
+    let c = reqwest::Client::new();
+    let created: serde_json::Value = c
+        .post(format!("{}/v1/sandboxes", h.base))
+        .json(&serde_json::json!({ "template": "python" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+
+    let set = c
+        .post(format!("{}/v1/sandboxes/{id}/egress", h.base))
+        .json(&serde_json::json!({ "internet": true, "allow": ["10.1.2.3/8"] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(set.status(), 200);
+    let want = Egress {
+        internet: true,
+        allow: vec!["10.0.0.0/8".into()],
+        deny: vec![],
+    };
+    assert_eq!(
+        set.json::<Egress>().await.unwrap(),
+        want,
+        "stored canonical, or a node would never compare equal"
+    );
+
+    // A node that has forgotten, as a restarted one has.
+    match poll_with(&h, &id, Some(Egress::default())).await.as_slice() {
+        [Command::SetEgress { id: got, egress }] => {
+            assert_eq!(*got, id);
+            assert_eq!(*egress, want);
+        }
+        other => panic!("expected SetEgress, got {other:?}"),
+    }
+    assert!(poll_with(&h, &id, Some(want)).await.is_empty());
+    // One too old to report any cannot be told.
+    assert!(poll_with(&h, &id, None).await.is_empty());
+
+    // What is named replaces; what is not stays.
+    let kept: Egress = c
+        .post(format!("{}/v1/sandboxes/{id}/egress", h.base))
+        .json(&serde_json::json!({ "internet": false }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!kept.internet);
+    assert_eq!(kept.allow, ["10.0.0.0/8"]);
+
+    let bad = c
+        .post(format!("{}/v1/sandboxes/{id}/egress", h.base))
+        .json(&serde_json::json!({ "allow": ["example.com"] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400);
+}
+
+async fn poll_pulls(
+    h: &Harness,
+    node: &str,
+    templates: &[&str],
+    pulls: Vec<TemplatePull>,
+) -> Vec<Command> {
+    let resp: PollResponse = reqwest::Client::new()
+        .post(format!("{}/v1/node/poll", h.base))
+        .json(&serde_json::json!({
+            "node_id": node, "observed": [],
+            "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
+            "templates": templates, "pulls": pulls,
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    resp.commands
+}
+
+async fn from_image(h: &Harness, body: serde_json::Value) -> reqwest::Response {
+    reqwest::Client::new()
+        .post(format!("{}/v1/templates/from-image", h.base))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn pulls(h: &Harness) -> serde_json::Value {
+    reqwest::Client::new()
+        .get(format!("{}/v1/templates/pulls", h.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+/// From the request to a sandbox: the node is told, the master does not
+/// spin on it while it runs, and what the image says becomes the template.
+#[tokio::test]
+async fn a_template_comes_from_an_image() {
+    let h = start().await;
+    register(&h, "bm-1", "default").await;
+    let c = reqwest::Client::new();
+    let r = from_image(
+        &h,
+        serde_json::json!({ "name": "py", "image": "python:3.12", "memory_max_mib": 256 }),
+    )
+    .await;
+    assert_eq!(r.status(), 202);
+
+    let early = c
+        .post(format!("{}/v1/sandboxes", h.base))
+        .json(&serde_json::json!({ "template": "py" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(early.status(), 409, "not until a node has it");
+
+    match poll_pulls(&h, "bm-1", &[], vec![]).await.as_slice() {
+        [Command::PullTemplate {
+            name,
+            image,
+            attempt,
+        }] => {
+            assert_eq!(
+                (name.as_str(), image.as_str(), *attempt),
+                ("py", "python:3.12", 1)
+            );
+        }
+        other => panic!("expected a pull, got {other:?}"),
+    }
+    // A poll with commands is answered at once, so this would spin.
+    let running = TemplatePull::running("py", "python:3.12", 1);
+    assert!(poll_pulls(&h, "bm-1", &[], vec![running]).await.is_empty());
+    assert_eq!(pulls(&h).await[0]["nodes"][0]["state"], "pulling");
+
+    let config = ImageConfig {
+        args: vec!["python3".into(), "-m".into(), "http.server".into()],
+        env: vec!["PATH=/usr/local/bin".into()],
+        cwd: Some("/app".into()),
+        port: Some(8000),
+    };
+    let done = TemplatePull::done("py", "python:3.12", 1, config);
+    assert!(poll_pulls(&h, "bm-1", &["py"], vec![done]).await.is_empty());
+    let view = pulls(&h).await;
+    assert_eq!(view[0]["ready"], true);
+    assert_eq!(view[0]["nodes"][0]["state"], "ready");
+
+    let made: serde_json::Value = c
+        .post(format!("{}/v1/sandboxes", h.base))
+        .json(&serde_json::json!({ "template": "py" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(made["port"], 8000, "the port the image exposes");
+    match poll_pulls(&h, "bm-1", &["py"], vec![]).await.as_slice() {
+        [Command::Create { spec, port, .. }] => {
+            assert_eq!(*port, 8000);
+            assert_eq!(spec["args"][0], "python3");
+            assert_eq!(spec["cwd"], "/app");
+            assert_eq!(spec["memory_max_mib"], 256);
+            assert!(spec["ro_binds"].as_array().unwrap().is_empty());
+            assert!(spec.get("pending").is_none());
+        }
+        other => panic!("expected a create, got {other:?}"),
+    }
+}
+
+/// A failed pull is not retried on its own, and is when asked. The outcome
+/// of the old attempt must not be taken for the new one's.
+#[tokio::test]
+async fn a_failed_pull_waits_to_be_asked_again() {
+    let h = start().await;
+    register(&h, "bm-1", "default").await;
+    let body = serde_json::json!({ "name": "py", "image": "no/such:image" });
+    assert_eq!(from_image(&h, body.clone()).await.status(), 202);
+    let failed = TemplatePull::failed("py", "no/such:image", 1, "404".into());
+    assert!(poll_pulls(&h, "bm-1", &[], vec![failed.clone()])
+        .await
+        .is_empty());
+    assert_eq!(pulls(&h).await[0]["nodes"][0]["error"], "404");
+    assert!(poll_pulls(&h, "bm-1", &[], vec![]).await.is_empty());
+
+    assert_eq!(from_image(&h, body).await.status(), 202);
+    match poll_pulls(&h, "bm-1", &[], vec![failed]).await.as_slice() {
+        [Command::PullTemplate { attempt: 2, .. }] => {}
+        other => panic!("expected a second attempt, got {other:?}"),
+    }
+}
+
+/// A node that joins later gets the template too.
+#[tokio::test]
+async fn a_node_that_joins_later_pulls_the_template() {
+    let h = start().await;
+    register(&h, "bm-1", "default").await;
+    from_image(
+        &h,
+        serde_json::json!({ "name": "py", "image": "python:3.12" }),
+    )
+    .await;
+    let config = ImageConfig {
+        args: vec!["python3".into()],
+        ..Default::default()
+    };
+    let done = TemplatePull::done("py", "python:3.12", 1, config);
+    poll_pulls(&h, "bm-1", &["py"], vec![done]).await;
+
+    register(&h, "bm-2", "default").await;
+    let cmds = poll_pulls(&h, "bm-2", &[], vec![]).await;
+    assert!(
+        matches!(cmds.as_slice(), [Command::PullTemplate { .. }]),
+        "{cmds:?}"
+    );
+    assert!(poll_pulls(&h, "bm-1", &["py"], vec![]).await.is_empty());
+}
+
+#[tokio::test]
+async fn an_image_with_no_program_needs_args() {
+    let h = start().await;
+    register(&h, "bm-1", "default").await;
+    from_image(&h, serde_json::json!({ "name": "s", "image": "scratch:1" })).await;
+    let done = TemplatePull::done("s", "scratch:1", 1, ImageConfig::default());
+    poll_pulls(&h, "bm-1", &["s"], vec![done]).await;
+    let view = pulls(&h).await;
+    assert_eq!(view[0]["ready"], false);
+    assert_eq!(view[0]["nodes"][0]["state"], "failed");
+}
+
+#[tokio::test]
+async fn a_name_that_means_something_else_is_refused() {
+    let h = start().await;
+    put_template(&h, "python").await;
+    let r = from_image(
+        &h,
+        serde_json::json!({ "name": "python", "image": "python:3.12" }),
+    )
+    .await;
+    assert_eq!(r.status(), 409);
+    let r = from_image(&h, serde_json::json!({ "name": "../x", "image": "python" })).await;
+    assert_eq!(r.status(), 400);
+    let r = from_image(&h, serde_json::json!({ "name": "x", "image": "a b" })).await;
+    assert_eq!(r.status(), 400);
 }

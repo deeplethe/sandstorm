@@ -4,6 +4,8 @@
 
 - Open feature, fix, documentation, and dependency pull requests against
   `dev`. GitHub uses `dev` as the repository's default branch.
+- Name a feature branch `feature/<short-name>`. Fixes and documentation keep
+  `fix/` and `docs/`.
 - `main` is the stable release line. Pull requests to `main` are accepted
   only from this repository's `dev` branch.
 - Both branches run the full CI suite. A pull request must pass the required

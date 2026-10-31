@@ -84,7 +84,13 @@ Measured 2026-10-31, with requests from each node to its own gateway, so no netw
 
 Traffic is 40 sandboxes per node with a few getting most requests; about 12 fit awake on a gVisor node. p50 is 6-10 ms on gVisor, 7-50 ms on KVM and 4-14 ms on PVM; p99 is about 2 s, 0.8-1.9 s and 1.8-3.6 s, the requests that had to wait for a restore. A wake that cannot start within 2 s is refused rather than queued. A gVisor node here restores two at a time and queues four, so of 10 or more woken at once, six are answered and the rest get a 503 at once.
 
-Kept in memory counts what stayed up with swap, not what answers quickly. The PVM host has room for about 8 of the 64 MiB app without it, so it ran fewer: 20 sandboxes under traffic, and no 1 GiB app. Firecracker's 512 MiB and 1 GiB figures are one sample each. [All the figures and how they were taken](bench/fleet/results/2026-10-31/README.md).
+The "kept in memory" metric counts sandboxes that remained running with swap enabled; it does not indicate how quickly they can respond to requests.
+
+Without swap, the PVM host could accommodate only about eight instances of the 64 MiB app. As a result, the traffic test used a smaller fleet of 20 sandboxes, and the 1 GiB app was not tested.
+
+Firecracker's results for the 512 MiB and 1 GiB configurations are based on a single sample each.
+
+See the [full results and testing methodology](bench/fleet/results/2026-10-31/README.md).
 
 ## Method
 
@@ -113,6 +119,8 @@ scripts/fleet.sh up --master m1 --nodes n1,n2,n3 --listen 80
 scripts/fleet.sh seed     # put a template on each node
 scripts/fleet.sh verify   # start one sandbox and check it runs
 ```
+
+A client on another machine verifies the name it connects to, and the master's certificate names only `127.0.0.1`, `localhost` and its `--bind` address. Add yours with `--tls-san master`, which can be repeated.
 
 **A node that is already installed** listens with `SANDSTORM_LISTEN=0.0.0.0:80`. On first start it writes a pairing code to `/var/lib/sandstorm/pki/node/pairing-code`. Give the master its address and that code, with the master's CA and API token from its `/var/lib/sandstorm/pki`:
 

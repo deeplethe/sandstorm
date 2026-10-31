@@ -12,10 +12,11 @@ import { st } from "../state";
 import { Dropdown, type Option } from "../components/Dropdown";
 import { useEscape } from "../components/hooks";
 
-export function NewSandbox({ open, seq, onClose, onCreated }: { open: boolean; seq: number; onClose: () => void; onCreated: () => void }) {
+export function NewSandbox({ open, seq, internet: byDefault, onClose, onCreated }: { open: boolean; seq: number; internet: boolean; onClose: () => void; onCreated: () => void }) {
   const [tpls, setTpls] = useState<Option[]>([]), [tpl, setTpl] = useState("");
   const [where, setWhere] = useState("");
   const [port, setPort] = useState("");
+  const [internet, setInternet] = useState("");
   const [err, setErr] = useState<ReactNode>("");
   const [out, setOut] = useState<{ ok: string; token: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -31,7 +32,7 @@ export function NewSandbox({ open, seq, onClose, onCreated }: { open: boolean; s
       try {
         const list = await api<TemplateEntry[]>("/v1/templates");
         const o = list.length ? list.map((t) => { const n = typeof t === "string" ? t : t.name; return { value: n, label: templateLabel(st.NOW?.nodes || [], n) }; }) : [{ value: "", label: "No templates registered" }];
-        setTpls(o); setTpl(o[0].value); setWhere("");
+        setTpls(o); setTpl(o[0].value); setWhere(""); setInternet("");
       } catch (e) { setErr(String((e as Error).message || e)); }
     })();
   }, [seq]);
@@ -42,9 +43,10 @@ export function NewSandbox({ open, seq, onClose, onCreated }: { open: boolean; s
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErr(""); setOut(null);
-    const body: { template: string; node_id?: string; backend?: string; port?: number } = { template: tpl, ...placeBody(where) };
+    const body: { template: string; node_id?: string; backend?: string; port?: number; egress?: { internet: boolean } } = { template: tpl, ...placeBody(where) };
     if (!body.template) { setErr("Register a template first (POST /v1/templates)."); return; }
     if (port) body.port = Number(port);
+    if (internet) body.egress = { internet: internet === "on" };
     setBusy(true);
     try {
       const r = await api<CreatedSandbox | CreatedSandbox[]>("/v1/sandboxes", body);
@@ -72,6 +74,7 @@ export function NewSandbox({ open, seq, onClose, onCreated }: { open: boolean; s
         <div className="note" hidden={!note}>{note}</div>
         <div className="warn" hidden={!warn}>{warn}</div>
         <label htmlFor="newPort">Port inside the sandbox</label><input id="newPort" type="number" min="1" max="65535" placeholder="the template's default" value={port} onChange={(e) => setPort(e.target.value)} />
+        <label htmlFor="newInternet">Internet</label><Dropdown id="newInternet" options={[{ value: "", label: `The default (${byDefault ? "on" : "off"})` }, { value: "on", label: "On" }, { value: "off", label: "Off" }]} value={internet} onChange={setInternet} />
         <button type="submit" className="go" disabled={busy}>Create it</button>
         <div hidden={!out}>
           <div className="ok">{out?.ok}</div>

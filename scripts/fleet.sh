@@ -696,13 +696,20 @@ done
 #   -m conntrack --ctstate RELATED,ESTABLISHED
 # and a hand-written -m state --state ESTABLISHED,RELATED does not
 # delete it, which is how a rule survived a cleanup once before.
-iptables -S 2>/dev/null | grep -E -- '(SANDSTORM-COLD|$SUBNET)' | while read -r line; do
+iptables -S 2>/dev/null | grep -E -- '(SANDSTORM-COLD|SANDSTORM-EGRESS|$SUBNET)' | while read -r line; do
   case "\$line" in
     -A*) iptables \$(printf '%s' "\$line" | sed 's/^-A/-D/') 2>/dev/null ;;
   esac
 done
-iptables -F SANDSTORM-COLD 2>/dev/null
-iptables -X SANDSTORM-COLD 2>/dev/null
+iptables -t nat -S 2>/dev/null | grep -E -- '$SUBNET' | while read -r line; do
+  case "\$line" in
+    -A*) iptables -t nat \$(printf '%s' "\$line" | sed 's/^-A/-D/') 2>/dev/null ;;
+  esac
+done
+for chain in SANDSTORM-COLD SANDSTORM-EGRESS SANDSTORM-PUBLIC; do
+  iptables -F \$chain 2>/dev/null
+  iptables -X \$chain 2>/dev/null
+done
 rm -rf /var/run/sandstorm-runsc
 EOF
     ok "$h  namespaces, veths and rules removed"

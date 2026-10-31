@@ -9,6 +9,7 @@ import { Nodes } from "./pages/Nodes";
 import { Groups } from "./pages/Groups";
 import { Sandboxes } from "./pages/Sandboxes";
 import { Snapshots } from "./pages/Snapshots";
+import { Templates } from "./pages/Templates";
 import { Activity } from "./pages/Activity";
 
 function placeTabInd(): void {
@@ -106,6 +107,7 @@ export function App() {
         <Groups />
         <Sandboxes />
         <Snapshots />
+          <Templates />
         <Activity />
       </main>
       <div className="tip" id="tip" ref={setTipEl}></div>

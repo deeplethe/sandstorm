@@ -10,11 +10,10 @@ Type=simple
 # joining an existing master drops --master and adds --master-url.
 ExecStart=/usr/local/bin/sandstormd serve \
   --master --node \
-  --bind 127.0.0.1:8889 \
+  --bind 127.0.0.1:8080 \
   --state-db /var/lib/sandstorm/state.db \
   --pki-dir /var/lib/sandstorm/pki \
-  --work-dir /var/lib/sandstorm \
-  --api-token-file /etc/sandstorm/api-token
+  --work-dir /var/lib/sandstorm
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2s

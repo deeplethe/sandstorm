@@ -1,121 +1,86 @@
 /**
- * Wire-level types for the sandstorm-controller REST API.
+ * Wire-level types for a Sandstorm master's REST API.
  *
- * Source of truth: `crates/sandstorm-controller/src/api.rs`. Optional
- * fields are marked optional here for v0.x compatibility — older
- * daemons may omit fields added in later releases.
+ * Source of truth: `docs/API.md`.
  */
+
+/** Where a sandbox is in the idle lifecycle, warmest first. */
+export type Tier = "hot" | "frozen" | "snapshot" | "detached";
 
 export interface SnapshotInfo {
   tag: string;
-  dir: string;
-  created_at_unix: number;
-  /** Set when produced by BRANCH; the source sandbox id. */
+  node_id: string;
+  template: string;
+  /** The sandbox it was branched from. */
+  from_sandbox?: string;
+  /** The v0.5 name for `from_sandbox`. */
   branched_from?: string;
-  /** v0.2.5+: source-VM pause window in milliseconds during BRANCH. */
-  pause_ms?: number;
-  /** v0.3+: time spent in the Diff snapshot call (subset of pause_ms). */
-  diff_ms?: number;
-  /** v0.3+: on-disk bytes of the diff = dirty page count. */
-  diff_physical_bytes?: number;
-  /** v0.3+: full guest-RAM size (what a Full snapshot would have written). */
-  diff_logical_bytes?: number;
-  /**
-   * v0.4+: live BRANCH lifecycle marker. `"writing"` while the
-   * background memory copy is in flight (only seen with `wait=false`),
-   * `"ready"` once the snapshot is consumable, `"failed"` if the
-   * background copy hit an error.
-   */
-  status?: "writing" | "ready" | "failed";
+  dir: string;
+  size_bytes: number;
+  created_at: number;
+  /** The v0.5 name for `created_at`. */
+  created_at_unix: number;
+}
+
+/** {@link SnapshotInfo} from `GET /v1/snapshots/:tag/info`. */
+export interface SnapshotDetail extends SnapshotInfo {
+  /** How many sandboxes are still forked from this tag. */
+  children: number;
 }
 
 export interface SandboxInfo {
   id: string;
-  /** Returned on creation; absent from GET/LIST responses and older servers. */
+  /** Only on the response that created it, so keep it. */
   token?: string;
-  snapshot_tag: string;
-  netns: string | null;
-  guest_addr: string;
+  node_id: string;
+  pool: string;
+  template: string;
+  tier: Tier;
+  port: number | null;
+  /** Absent when none was free: it is then reachable only from its node. */
+  gateway_port?: number;
+  /** Absent until a node reports the sandbox running. */
+  ip?: string;
+  /** Absent until a node reports the sandbox running. */
+  guest_addr?: string;
+  netns?: string;
+  volume: string | null;
+  created_at: number;
+  /** The v0.5 name for `created_at`. */
   created_at_unix: number;
-  pid: number | null;
-  memory_limit_mib: number | null;
-  /** v0.3+: any BRANCH has been taken from this sandbox. */
-  has_branched?: boolean;
-  /** v0.3.1+: chain head for the next diff BRANCH. */
-  last_branch_memory_path?: string | null;
-}
-
-export interface SpawnOptions {
-  snapshot_tag: string;
-  n?: number;
-  per_child_netns?: boolean;
+  last_active_at: number;
+  /** The tag it was forked from, when it was. */
+  snapshot_tag?: string;
+  /** The override in force. Absent when the template's applies. */
   memory_limit_mib?: number;
-  /** v0.2.5+: pre-warm sandbox after restore to relocate cold-cache. */
-  prewarm?: boolean;
-  /**
-   * v0.4 to v0.5 only; a v0.6 master refuses `true` with 410 Gone.
-   * Boot the sandbox with a memfd-backed RAM region so later BRANCHes
-   * from it can use `mode: "live"`. Requires kernel 5.7+ and the
-   * vendored Firecracker fork (see `docs/VENDORED-FIRECRACKER.md` in
-   * the v0.5.3 tag).
-   */
-  live_fork?: boolean;
-  /**
-   * v0.4 to v0.5 only, refused by v0.6 like `live_fork`. Back the
-   * memfd with 2 MiB hugepages (`MFD_HUGETLB |
-   * MFD_HUGE_2MB`). Only meaningful with `live_fork: true`. Reduces
-   * TLB pressure during spawn-many and live BRANCH bulk-copy. Requires
-   * non-zero `HugePages_Free` in `/proc/meminfo` — `sandstorm doctor`
-   * checks availability. Falls back to normal 4 KiB pages with a
-   * warning if the pool is exhausted.
-   */
-  hugepages?: boolean;
+  /** Why it is not up, when it is not. */
+  last_error?: string;
+  error_attempts?: number;
 }
 
-/**
- * Canonical BRANCH mode (Phase 7.1+).
- *
- * - `"full"` — copy entire guest RAM under pause (default for v0.x).
- * - `"diff"` — Firecracker Diff snapshot (v0.3+). Sub-second pause for
- *   idle sources; replaces the legacy `diff: true` boolean.
- * - `"live"` — UFFD_WP-based live BRANCH (v0.4+). Sub-50 ms source
- *   pause; memory streams from the running parent. Requires source
- *   booted with `live_fork: true`.
- *
- * `"diff"` and `"live"` are v0.5 (Firecracker) modes. A v0.6 master has
- * no diff snapshots and refuses `"live"` with 410 Gone.
- */
-export type BranchMode = "full" | "diff" | "live";
+/** The body of `POST /v1/sandboxes`. */
+export interface SpawnOptions {
+  /** Start from this template. Exactly one of this and `snapshot_tag`. */
+  template?: string;
+  /** Fork from this tag. */
+  snapshot_tag?: string;
+  /** How many to make, at most 256. Also makes the answer a list. */
+  n?: number;
+  id?: string;
+  pool?: string;
+  node_id?: string;
+  /** Only on nodes running `gvisor` or `firecracker`. For a template. */
+  backend?: string;
+  port?: number;
+  volume?: string;
+  memory_limit_mib?: number;
+  /** Accepted and ignored: every sandbox has its own namespace. */
+  per_child_netns?: boolean;
+}
 
 export interface BranchOptions {
-  /** Optional tag for the new snapshot. Daemon generates one when unset. */
-  tag?: string;
-  /**
-   * v0.4+ canonical mode selector. Prefer this over the legacy `diff`
-   * boolean in new code. Mutually exclusive with `diff` — passing both
-   * yields HTTP 400.
-   */
-  mode?: BranchMode;
-  /**
-   * **Legacy.** Equivalent to `mode: "diff"`. Kept so this SDK can
-   * drive v0.3.x daemons that don't understand `mode`. Mutually
-   * exclusive with `mode` server-side.
-   */
-  diff?: boolean;
-  /**
-   * v0.3+: measurement-only hook. Take a Diff snapshot inside the
-   * existing Full pause to report what diff would have cost, without
-   * changing semantics. Mutually exclusive with `diff` (400 if both).
-   */
-  measure_diff?: boolean;
-  /**
-   * v0.4+, only meaningful with `mode: "live"`. Default `true` blocks
-   * until the background memory copy finishes and the returned
-   * snapshot is `status: "ready"`. Set to `false` to return as soon
-   * as the source resumes (~10 ms); snapshot reaches `status: "ready"`
-   * later — poll `listSnapshots` to detect completion.
-   */
-  wait?: boolean;
+  /** Name for the new tag: no slashes, no leading dots. */
+  tag: string;
 }
 
 export interface ExecOptions {
@@ -129,13 +94,18 @@ export interface ExecResult {
   exit_code: number;
 }
 
+/** A result or an error, never both. */
 export interface EvalResult {
-  result: unknown;
-  error: string | null;
+  /** What the snippet printed. */
+  result?: string;
+  error?: string;
   exit_code: number;
 }
 
 export interface PingResult {
-  /** Whatever the in-guest agent returns. Shape stable per recipe. */
-  [key: string]: unknown;
+  /** Whether something accepts connections on the sandbox's port. */
+  ok: boolean;
+  tier: Tier;
+  guest_addr?: string;
+  latency_ms: number;
 }

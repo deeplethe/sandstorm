@@ -19,7 +19,8 @@ use crate::auth::{require_token, AuthConfig};
 use crate::identity::{random_token, Ca};
 use crate::node::BackendKind;
 use crate::proto::{
-    Command, CommandResult, FetchFrom, PollRequest, PollResponse, RegisterRequest, RegisterResponse,
+    Command, CommandResult, Egress, FetchFrom, PollRequest, PollResponse, RegisterRequest,
+    RegisterResponse,
 };
 use crate::state::{now_secs, Node, Sandbox, SnapshotTag, Store};
 use crate::tier::{IdlePolicy, Tier};
@@ -466,6 +467,11 @@ pub fn router(st: St) -> Router {
         .route("/v1/sandboxes/:id/touch", post(touch_sandbox))
         .route("/v1/sandboxes/:id/retry", post(retry_sandbox))
         .route("/v1/sandboxes/:id/tier", post(set_tier))
+        .route("/v1/sandboxes/:id/egress", post(set_sandbox_egress))
+        .route(
+            "/v1/egress",
+            get(get_default_egress).post(set_default_egress),
+        )
         .route("/v1/sandboxes/:id/exec", post(exec_sandbox))
         .route("/v1/sandboxes/:id/branch", post(branch_sandbox))
         .route("/v1/sandboxes/:id/eval", post(eval_sandbox))
@@ -477,6 +483,8 @@ pub fn router(st: St) -> Router {
         .route("/v1/snapshots/:tag", axum::routing::delete(delete_snapshot))
         .route("/v1/snapshots/:tag/info", get(snapshot_info))
         .route("/v1/templates", get(list_templates).post(put_template))
+        .route("/v1/templates/from-image", post(pull_template))
+        .route("/v1/templates/pulls", get(list_pulls))
         // Behind the token like everything else: the exposition names every
         // node and its free memory, which is a map of the fleet.
         .route("/metrics", get(metrics_endpoint))
@@ -2202,10 +2210,13 @@ async fn branch_sandbox(
     Path(id): Path<String>,
     Json(req): Json<BranchReq>,
 ) -> Result<(StatusCode, Json<SnapshotView>), ApiErr> {
-    if req.mode.as_deref() == Some("live") || req.live == Some(true) {
+    // "full" is what a branch is, so it asks for nothing that went away.
+    // Anything else is refused rather than ignored, or a caller who asked
+    // for a diff believes it got one.
+    if req.mode.as_deref().is_some_and(|mode| mode != "full") || req.live == Some(true) {
         return Err(err(
             StatusCode::GONE,
-            "mode=\"live\" is removed in v0.6. A branch is a checkpoint \
+            "mode and live are removed in v0.6. A branch is a checkpoint \
              restored into each child; the parent pauses for about 80 ms. \
              Drop the field for the same call.",
         ));
@@ -2589,7 +2600,8 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
         .sandboxes_on_node(&req.node_id)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let mut commands = Vec::new();
+    let mut commands = pulls_for(&store, req)
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     // Where each tag forked here comes from, looked up once per diff.
     let mut sources: HashMap<String, Option<FetchFrom>> = HashMap::new();
     for want in &desired {
@@ -2654,13 +2666,25 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
                     gateway_port: want.gateway_port,
                     token: want.token.clone(),
                     fetch: fetch.map(Box::new),
+                    egress: want.egress.clone(),
                 })
             }
-            Some(got) if got.tier != want.tier => commands.push(Command::SetTier {
-                id: want.id.clone(),
-                tier: want.tier,
-            }),
-            Some(_) => {}
+            Some(got) => {
+                if got.tier != want.tier {
+                    commands.push(Command::SetTier {
+                        id: want.id.clone(),
+                        tier: want.tier,
+                    });
+                }
+                // Rules are what a node reports, not what it was last sent,
+                // so a node that restarted gets them back the same way.
+                if got.egress.as_ref().is_some_and(|e| *e != want.egress) {
+                    commands.push(Command::SetEgress {
+                        id: want.id.clone(),
+                        egress: want.egress.clone(),
+                    });
+                }
+            }
         }
     }
     // Anything the node holds that we no longer want. Adoption means we only
@@ -2749,6 +2773,8 @@ pub(super) struct SandboxView {
     /// one, absent when the template's applies.
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_limit_mib: Option<u64>,
+    /// What it may reach.
+    egress: Egress,
     volume: Option<String>,
     port: Option<u16>,
     /// Host port to reach this sandbox on, from off the node. Absent when
@@ -2786,6 +2812,7 @@ impl From<Sandbox> for SandboxView {
             created_at_unix: s.created_at,
             netns: Some(format!("sandstorm-{}", s.id)),
             memory_limit_mib: s.memory_limit_mib,
+            egress: s.egress,
             id: s.id,
             node_id: s.node_id,
             pool: s.pool,
@@ -2837,6 +2864,9 @@ pub(super) struct NewSandbox {
     /// v0.5 name, which both SDKs send.
     #[serde(default)]
     memory_limit_mib: Option<u64>,
+    /// What it may reach, in place of the cluster's default.
+    #[serde(default)]
+    egress: Option<Egress>,
     /// Accepted and ignored, either way. Every sandbox gets its own
     /// network namespace in v0.6, so `true` asks for what already
     /// happens and `false` asks for something weaker than it will get.
@@ -2871,6 +2901,14 @@ impl NewSandbox {
             template: Some(template.to_string()),
             port: Some(port),
             ..Default::default()
+        }
+    }
+
+    /// With what it may reach decided by the caller.
+    pub(super) fn egress(self, egress: Egress) -> Self {
+        Self {
+            egress: Some(egress),
+            ..self
         }
     }
 }
@@ -2922,6 +2960,13 @@ pub(super) async fn create_sandbox(
         (None, Some(tag)) => (String::new(), Some(tag.clone())),
     };
 
+    let egress = match req.egress.clone() {
+        Some(e) => e.canonical().map_err(|e| err(StatusCode::BAD_REQUEST, e))?,
+        None => st
+            .store()
+            .default_egress()
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+    };
     let count = req.n.unwrap_or(1);
     if count == 0 {
         return Err(err(StatusCode::BAD_REQUEST, "n must be at least 1"));
@@ -3047,16 +3092,25 @@ pub(super) async fn create_sandbox(
             (snap.template, place, snap.port)
         }
         None => {
-            if store
+            let Some((_, spec)) = store
                 .get_template(&template)
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-                .is_none()
-            {
+            else {
                 return Err(err(
                     StatusCode::BAD_REQUEST,
                     format!("unknown template: {template}"),
                 ));
+            };
+            if is_pending(&spec) {
+                return Err(err(
+                    StatusCode::CONFLICT,
+                    format!("template {template} is still being pulled"),
+                ));
             }
+            let image_port = serde_json::from_str::<serde_json::Value>(&spec)
+                .ok()
+                .and_then(|v| v["port"].as_u64())
+                .and_then(|p| u16::try_from(p).ok());
             let place = match &req.node_id {
                 Some(n) => {
                     // Asked for by name, so refused by name: placed anyway,
@@ -3090,7 +3144,7 @@ pub(super) async fn create_sandbox(
                     backend,
                 ),
             };
-            (template, place, None)
+            (template, place, image_port)
         }
     };
 
@@ -3156,6 +3210,7 @@ pub(super) async fn create_sandbox(
         // nothing to allocate -- two sandboxes may both listen on 8080.
         // A fork serves where its parent did unless the caller says
         // otherwise: the image holds the program already listening there.
+        // A template from an image serves where the image says.
         let port = Some(req.port.or(tag_port).unwrap_or(DEFAULT_SANDBOX_PORT));
         // A host port for the gateway, distinct from `port` above, which is
         // inside the namespace and is 8080 for nearly every sandbox.
@@ -3217,6 +3272,7 @@ pub(super) async fn create_sandbox(
             from_tag: from_tag.clone(),
             memory_limit_mib: req.memory_limit_mib,
             gateway_port,
+            egress: egress.clone(),
         };
         store
             .insert_sandbox(&sb)
@@ -3512,7 +3568,275 @@ pub(super) async fn delete_sandbox(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ---- egress -------------------------------------------------------------
+
+/// A change to a policy: what it names is replaced, the rest stays, so
+/// "internet on" from a console does not lose the lists it did not send.
+#[derive(Deserialize)]
+pub(super) struct EgressChange {
+    #[serde(default)]
+    pub(super) internet: Option<bool>,
+    #[serde(default)]
+    pub(super) allow: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) deny: Option<Vec<String>>,
+}
+
+impl EgressChange {
+    fn applied_to(self, e: Egress) -> Result<Egress, ApiErr> {
+        Egress {
+            internet: self.internet.unwrap_or(e.internet),
+            allow: self.allow.unwrap_or(e.allow),
+            deny: self.deny.unwrap_or(e.deny),
+        }
+        .canonical()
+        .map_err(|e| err(StatusCode::BAD_REQUEST, e))
+    }
+}
+
+async fn get_default_egress(State(st): State<St>) -> Result<Json<Egress>, ApiErr> {
+    let e = st
+        .store()
+        .default_egress()
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(e))
+}
+
+/// For sandboxes created from now on. One that is running keeps its rules:
+/// taking the internet from a thousand agents is not what a default means.
+async fn set_default_egress(
+    State(st): State<St>,
+    Json(req): Json<EgressChange>,
+) -> Result<Json<Egress>, ApiErr> {
+    let store = st.store();
+    let e = store
+        .default_egress()
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let e = req.applied_to(e)?;
+    store
+        .set_default_egress(&e)
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(e))
+}
+
+pub(super) async fn set_sandbox_egress(
+    State(st): State<St>,
+    Path(id): Path<String>,
+    Json(req): Json<EgressChange>,
+) -> Result<Json<Egress>, ApiErr> {
+    let (node_id, e) = {
+        let store = st.store();
+        let sb = store
+            .get_sandbox(&id)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("no sandbox {id}")))?;
+        let e = req.applied_to(sb.egress)?;
+        store
+            .set_sandbox_egress(&id, &e)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        (sb.node_id, e)
+    };
+    st.wake_node(&node_id);
+    Ok(Json(e))
+}
+
 // ---- templates ----------------------------------------------------------
+
+/// Record how this node's image pulls stand, and say which to start.
+///
+/// A pull the node reports running gets no command: a poll with commands is
+/// answered at once, so repeating one would spin for as long as it runs.
+/// Failed stays failed until someone asks again, as a new attempt.
+fn pulls_for(store: &Store, req: &PollRequest) -> anyhow::Result<Vec<Command>> {
+    let mut commands = Vec::new();
+    let Some(installed) = &req.templates else {
+        return Ok(commands);
+    };
+    let pulls = store.template_pulls()?;
+    for t in store.image_templates()? {
+        let reported = req
+            .pulls
+            .iter()
+            .find(|p| p.name == t.name && p.attempt == t.attempt);
+        if let Some(p) = reported {
+            let error = p.error.clone().or_else(|| {
+                let c = p.config.as_ref()?;
+                (p.done && c.args.is_empty() && !spec_has_args(&t.spec))
+                    .then(|| "the image names no program; give args".to_string())
+            });
+            store.record_pull(&t.name, &req.node_id, p.attempt, p.done, error.as_deref())?;
+            if let (Some(c), None) = (&p.config, &error) {
+                if is_pending(&t.spec) {
+                    store.set_template_spec(&t.name, &finished_spec(&t.spec, c))?;
+                }
+            }
+            continue;
+        }
+        let failed = pulls
+            .iter()
+            .any(|p| p.template == t.name && p.node_id == req.node_id && p.error.is_some());
+        if !failed && (!installed.contains(&t.name) || is_pending(&t.spec)) {
+            commands.push(Command::PullTemplate {
+                name: t.name,
+                image: t.image,
+                attempt: t.attempt,
+            });
+        }
+    }
+    Ok(commands)
+}
+
+fn is_pending(spec: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(spec)
+        .is_ok_and(|v| v["pending"].as_bool() == Some(true))
+}
+
+fn spec_has_args(spec: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(spec)
+        .is_ok_and(|v| v["args"].as_array().is_some_and(|a| !a.is_empty()))
+}
+
+/// What the caller asked for, over what the image says. `ro_binds` is empty
+/// on purpose: the default binds the host's `/usr` over the template's own,
+/// which is right for a skeleton rootfs and wrong for an image.
+fn finished_spec(asked: &str, c: &crate::proto::ImageConfig) -> String {
+    let asked: serde_json::Value = serde_json::from_str(asked).unwrap_or_default();
+    let args = asked
+        .get("args")
+        .filter(|a| a.as_array().is_some_and(|a| !a.is_empty()))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!(c.args));
+    let mut env = c.env.clone();
+    env.extend(
+        asked["env"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.as_str().map(str::to_string)),
+    );
+    serde_json::json!({
+        "args": args,
+        "env": env,
+        "cwd": c.cwd,
+        "ro_binds": [],
+        "memory_max_mib": asked["memory_max_mib"],
+        "port": asked.get("port").filter(|p| !p.is_null()).cloned().or(c.port.map(Into::into)),
+    })
+    .to_string()
+}
+
+#[derive(Deserialize)]
+struct NewImageTemplate {
+    name: String,
+    image: String,
+    #[serde(default = "default_image_memory")]
+    memory_max_mib: u64,
+    /// In place of the image's `Entrypoint` and `Cmd`.
+    #[serde(default)]
+    args: Vec<String>,
+    /// Added to the image's `Env`.
+    #[serde(default)]
+    env: Vec<String>,
+    /// In place of the lowest port the image exposes.
+    #[serde(default)]
+    port: Option<u16>,
+}
+
+fn default_image_memory() -> u64 {
+    512
+}
+
+/// Have every node pull an image and keep it as a template. Answers at once;
+/// `GET /v1/templates/pulls` says how it goes. Sent again, it is another try.
+async fn pull_template(
+    State(st): State<St>,
+    Json(req): Json<NewImageTemplate>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiErr> {
+    if !crate::tag::is_safe(&req.name) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            format!("{:?} is not a plain name", req.name),
+        ));
+    }
+    crate::node::images::Reference::parse(&req.image)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let spec = serde_json::json!({
+        "pending": true,
+        "args": req.args,
+        "env": req.env,
+        "memory_max_mib": req.memory_max_mib,
+        "port": req.port,
+    });
+    let store = st.store();
+    let fresh = store
+        .put_image_template(&req.name, &req.image, &spec.to_string())
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !fresh {
+        return Err(err(
+            StatusCode::CONFLICT,
+            format!("template {} already exists, from something else", req.name),
+        ));
+    }
+    let nodes = store
+        .list_nodes()
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    drop(store);
+    for n in nodes {
+        st.wake_node(&n.id);
+    }
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "name": req.name, "image": req.image })),
+    ))
+}
+
+#[derive(Serialize)]
+struct PullView {
+    name: String,
+    image: String,
+    /// Whether sandboxes can start from it.
+    ready: bool,
+    nodes: Vec<PullNodeView>,
+}
+
+#[derive(Serialize)]
+struct PullNodeView {
+    node_id: String,
+    /// `pulling`, `ready` or `failed`.
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn list_pulls(State(st): State<St>) -> Result<Json<Vec<PullView>>, ApiErr> {
+    let store = st.store();
+    let bad = |e: anyhow::Error| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    let pulls = store.template_pulls().map_err(bad)?;
+    let views = store
+        .image_templates()
+        .map_err(bad)?
+        .into_iter()
+        .map(|t| PullView {
+            ready: !is_pending(&t.spec),
+            nodes: pulls
+                .iter()
+                .filter(|p| p.template == t.name)
+                .map(|p| PullNodeView {
+                    node_id: p.node_id.clone(),
+                    state: match (p.done, &p.error) {
+                        (_, Some(_)) => "failed",
+                        (true, None) => "ready",
+                        (false, None) => "pulling",
+                    },
+                    error: p.error.clone(),
+                })
+                .collect(),
+            name: t.name,
+            image: t.image,
+        })
+        .collect();
+    Ok(Json(views))
+}
 
 #[derive(Deserialize)]
 struct NewTemplate {

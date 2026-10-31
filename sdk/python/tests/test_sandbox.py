@@ -65,6 +65,8 @@ class FakeMaster:
         parts = path.split("/")[2:]
         if method == "POST" and parts == ["sandboxes"]:
             return self.create(body)
+        if method == "GET" and parts == ["templates"]:
+            return 200, ["python"]
         sandbox_id = parts[1]
         sb = self.sandboxes.get(sandbox_id)
         if sb is None:
@@ -74,6 +76,10 @@ class FakeMaster:
         if method == "DELETE":
             del self.sandboxes[sandbox_id]
             return 204, None
+        if parts[2] == "touch":
+            return 200, self.view(sb)
+        if parts[2] == "branch":
+            return 201, {"tag": body["tag"], "from_sandbox": sandbox_id}
         if headers.get(SANDBOX_TOKEN_HEADER) != sb["token"]:
             return 403, {"error": "this sandbox requires its own access token"}
         if parts[2] == "exec":
@@ -356,3 +362,50 @@ def test_connect_to_nothing_raises(controller):
     with pytest.raises(ControllerError) as e:
         Sandbox.connect("sb-none", "t", controller=controller)
     assert e.value.status == 404
+
+
+# ---- the Controller's own calls ----------------------------------------------
+
+
+def test_branch_sends_the_tag_and_nothing_else(master, controller):
+    sb = controller.create_sandbox(template="python")
+    assert controller.branch_sandbox(sb["id"], "checkpoint-1")["tag"] == "checkpoint-1"
+    assert master.seen("POST", "/branch")[0][2] == {"tag": "checkpoint-1"}
+
+
+def test_branch_needs_a_tag(controller):
+    with pytest.raises(TypeError):
+        controller.branch_sandbox("sb-1")
+
+
+def test_branch_waits_as_long_as_the_master_may_take(controller, monkeypatch):
+    seen = {}
+
+    def request(method, path, body=None, sandbox_token=None, timeout=None):
+        seen["timeout"] = timeout
+
+    monkeypatch.setattr(controller, "_request", request)
+    controller.branch_sandbox("sb-1", "t")
+    assert seen["timeout"] == 185
+
+
+def test_spawn_sends_only_what_a_master_reads(master, controller):
+    controller.spawn_sandboxes("checkpoint-1", n=2, memory_limit_mib=512)
+    assert master.seen("POST", "/sandboxes")[0][2] == {
+        "snapshot_tag": "checkpoint-1",
+        "n": 2,
+        "per_child_netns": False,
+        "memory_limit_mib": 512,
+    }
+
+
+@pytest.mark.parametrize("removed", ["prewarm", "live_fork", "hugepages"])
+def test_what_v0_6_removed_is_not_offered(controller, removed):
+    with pytest.raises(TypeError):
+        controller.spawn_sandboxes("checkpoint-1", **{removed: True})
+
+
+def test_templates_and_touch(master, controller):
+    assert controller.list_templates() == ["python"]
+    sb = controller.create_sandbox(template="python")
+    assert controller.touch_sandbox(sb["id"])["tier"] == "hot"

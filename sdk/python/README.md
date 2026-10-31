@@ -13,6 +13,10 @@ export SANDSTORM_TOKEN="$(sudo cat /var/lib/sandstorm/pki/api-token)"
 export SANDSTORM_CA=ca.pem
 ```
 
+A client verifies the name it connects to, and a master's certificate names only
+`127.0.0.1`, `localhost` and its `--bind` address. So start this one with
+`--tls-san master.example`.
+
 ```python
 from sandstorm import Sandbox
 

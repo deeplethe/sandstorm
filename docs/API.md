@@ -1,8 +1,12 @@
 # Sandstorm HTTP API (v1)
 
 The master serves this API over TLS on `127.0.0.1:8080` by default (`--bind`).
-Clients verify it against the deployment's `ca.pem`. Every route needs the API
-token unless this page says otherwise; the token is in
+Clients verify it against the deployment's `ca.pem`, which is
+[`GET /ca.pem`](#get-capem) when you do not have the file. Its certificate names
+`127.0.0.1`, `localhost` and the `--bind` address. Add any other name clients
+or a node's `--master-url` use with `--tls-san`, which can be repeated, or they
+will refuse it. Every
+route needs the API token unless this page says otherwise; the token is in
 `/var/lib/sandstorm/pki/api-token`.
 
 ```http
@@ -19,15 +23,19 @@ The official E2B SDKs use a separate listener, with `--e2b-bind` and
 | Route | What it does |
 |---|---|
 | `GET /healthz` | Liveness probe, no token |
+| `GET /ca.pem` | The deployment's CA certificate, no token |
 | `GET /metrics` | Prometheus metrics |
 | `GET /v1/nodes`, `POST /v1/nodes` | List nodes, take over a listening one |
 | `POST /v1/node-tokens`, `POST /v1/node-bootstrap` | Let a node join by dialling the master |
 | `POST /v1/node/revoke/:id` | Stop trusting a node |
 | `POST /v1/nodes/:id/backend` | Move a node to another backend |
 | `GET /v1/templates`, `POST /v1/templates` | List and register templates |
+| `POST /v1/templates/from-image`, `GET /v1/templates/pulls` | Make a template from a container image, and see how it goes |
 | `GET /v1/sandboxes`, `POST /v1/sandboxes` | List sandboxes, start or fork them |
 | `GET /v1/sandboxes/:id`, `DELETE /v1/sandboxes/:id` | Read or delete one |
 | `POST /v1/sandboxes/:id/{touch,tier,retry}` | Wake it, move it, retry a failure |
+| `POST /v1/sandboxes/:id/egress` | Change what it may reach |
+| `GET /v1/egress`, `POST /v1/egress` | What new sandboxes may reach by default |
 | `POST /v1/sandboxes/:id/{exec,eval,ping}` | Run something in it, with its sandbox token (`ping` also takes `GET`) |
 | `POST /v1/sandboxes/:id/branch` | Checkpoint it into a tag |
 | `GET /v1/snapshots`, `GET /v1/snapshots/:tag/info`, `DELETE /v1/snapshots/:tag` | Manage tags |
@@ -40,6 +48,19 @@ and may change. So are `/v1/node/{poll,traffic,result}`, which nodes use.
 ### GET /healthz
 
 Answers `ok` with a 200. It needs no token, so a load balancer can probe it.
+
+### GET /ca.pem
+
+The deployment's CA certificate, as PEM. It needs no token, because a client that
+does not have it yet cannot verify the connection it would send one over. So the
+first fetch is unverified:
+
+```bash
+curl -k https://master:8080/ca.pem -o ca.pem
+```
+
+Check it before you trust it: `ca_fingerprint` from `POST /v1/node-bootstrap`, and
+the start of a registration token, are its SHA-256.
 
 ### GET /metrics
 
@@ -171,7 +192,8 @@ A list of template names.
 
 ### POST /v1/templates
 
-Register a template. Its files must already be on the nodes.
+Register a template. Its files must already be on the nodes. To have them put
+there, use [`from-image`](#post-v1templatesfrom-image).
 
 ```json
 {
@@ -183,6 +205,52 @@ Register a template. Its files must already be on the nodes.
 
 `spec` is kept as given; `args`, `env`, `cwd`, `ro_binds` and `memory_max_mib` are
 the fields a node reads. Answers `201`.
+
+### POST /v1/templates/from-image
+
+Have every node pull an image from its registry and keep it as a template. Nodes
+need no Docker, and a node that joins later pulls it too.
+
+```json
+{ "name": "python", "image": "python:3.12-slim", "memory_max_mib": 256 }
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | The template's name |
+| `image` | As for `docker pull`. Docker Hub unless it names a registry |
+| `memory_max_mib` | Memory ceiling. 512 by default |
+| `args` | What to run, in place of the image's `Entrypoint` and `Cmd` |
+| `env` | Added to the image's `Env` |
+| `port` | In place of the lowest port the image exposes |
+
+Answers `202` at once. A sandbox can start as soon as one node has it, on the
+nodes that do, and until then `POST /v1/sandboxes` answers `409`. Sent again with
+the same image it tries again, on the nodes that failed and any that have not
+finished. A name that is already something else is refused with `409`.
+
+- Public images only: a registry that wants a login is reported as failed.
+- Plain HTTP only to `localhost` and `127.0.0.1`.
+- 32 GiB at most, compressed.
+- A program runs as root, whatever the image's `User` says.
+- On Firecracker nodes the image needs `bash` and `python3`, which the guest's
+  init and agent run on. One without them fails on those nodes and says so.
+
+### GET /v1/templates/pulls
+
+```json
+[{
+  "name": "python",
+  "image": "python:3.12-slim",
+  "ready": true,
+  "nodes": [
+    { "node_id": "f3", "state": "ready" },
+    { "node_id": "f5", "state": "failed", "error": "the image has no linux/arm64 variant" }
+  ]
+}]
+```
+
+`state` is `pulling`, `ready` or `failed`.
 
 ## Sandboxes
 
@@ -206,6 +274,7 @@ Start one from a template, or fork from a tag. Exactly one of `template` and
 | `port` | The port the gateway forwards to by default |
 | `volume` | A named volume to attach |
 | `memory_limit_mib` | Memory ceiling, overriding the template's |
+| `egress` | What it may reach, in place of the [default](#egress) |
 | `per_child_netns` | Accepted and ignored: every sandbox has its own namespace |
 
 `live_fork` or `hugepages` set to `true` is refused with `410 Gone`.
@@ -315,8 +384,9 @@ image, so a fork from the tag cannot race ahead of it.
 { "tag": "checkpoint-1" }
 ```
 
-`tag` is a plain name: no slashes, no leading dots. The fields `mode`, `live`,
-`wait`, `diff` and `measure_diff` were removed in v0.6.
+`tag` is required, and is a plain name: no slashes, no leading dots. The fields
+`mode`, `live`, `wait`, `diff` and `measure_diff` were removed in v0.6. Only
+`"mode": "full"` is still accepted, since that is what a branch is.
 
 | Status | Meaning |
 |---|---|
@@ -327,6 +397,46 @@ image, so a fork from the tag cannot race ahead of it.
 | `410` | A removed field was set |
 | `500` | The checkpoint failed on the node |
 | `504` | The node did not finish within 180 s |
+
+## Egress
+
+A sandbox reaches nothing beyond its own node unless it is allowed to, and by
+default none is. Policy, on a sandbox or as the default:
+
+```json
+{ "internet": true, "allow": ["10.1.0.0/16"], "deny": ["203.0.113.0/24"] }
+```
+
+| Field | Meaning |
+|---|---|
+| `internet` | Public addresses. Never private ranges, other sandboxes or the cloud metadata service |
+| `allow` | IPv4 addresses and CIDRs always reachable, private ones included |
+| `deny` | IPv4 addresses and CIDRs not reachable through `internet`. `allow` wins over it |
+
+At most 64 entries between the lists. A domain is refused with `400`: a rule
+holds addresses. A sandbox that may reach names needs a resolver it can reach,
+which `internet` gives it; with `allow` alone, list the resolver too.
+
+### POST /v1/sandboxes/:id/egress
+
+Change it, in any tier. What the body names is replaced and the rest stays, so
+`{ "internet": true }` keeps the lists. Answers the policy as stored. The node
+applies it with its next command, which is after any `exec` it is running, and a
+connection already open then dies if the new policy forbids it.
+
+### GET /v1/egress
+
+The policy a new sandbox gets when it does not give one.
+
+### POST /v1/egress
+
+Change it, by the same rule. Only sandboxes created from then on are affected.
+
+Through the [E2B API](../recipes/e2b-codeinterpreter/README.md), `allow_internet_access: false`
+closes a sandbox and `network.allowOut` and `network.denyOut` add to these lists.
+At creation `true` does not open one: older SDKs send it unless told otherwise,
+so the default decides. `PUT /sandboxes/:id/network` changes it afterwards, where
+it does.
 
 ## Snapshots
 
@@ -363,6 +473,7 @@ reports holding it.
   "ip": "10.86.0.2",
   "guest_addr": "10.86.0.2:8000",
   "netns": "sandstorm-sb-0123456789abcdef0123456789abcdef",
+  "egress": { "internet": false },
   "volume": null,
   "created_at": 1793348196,
   "created_at_unix": 1793348196,

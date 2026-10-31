@@ -16,6 +16,7 @@ mod bundle;
 mod firecracker;
 mod gateway;
 mod host;
+pub mod images;
 mod net;
 mod reclaim;
 mod runtime;
@@ -146,6 +147,7 @@ pub struct NodeConfig {
     /// Tags being fetched from other nodes, so one fetch serves every child
     /// of a tag that arrives while it runs.
     pub fetches: Arc<Fetches>,
+    pub pulls: Arc<images::Pulls>,
     /// Where this node's backend choice lives, if it was installed so the
     /// master can switch it (`switch.rs`). `None`: the backend is whatever
     /// the command line said, and a switch is refused.
@@ -207,7 +209,10 @@ fn holding_back_at(
         // Hot is the only tier that has to restore something. Frozen,
         // Snapshot and Detached all give memory back.
         Command::SetTier { tier, .. } => *tier == crate::tier::Tier::Hot,
-        Command::Destroy { .. } | Command::DropTag { .. } => false,
+        Command::Destroy { .. }
+        | Command::DropTag { .. }
+        | Command::SetEgress { .. }
+        | Command::PullTemplate { .. } => false,
         Command::Exec { .. } | Command::Branch { .. } | Command::SetBackend { .. } => false,
     };
     if !costs_memory {
@@ -625,6 +630,7 @@ async fn report_wakes(
             host: None,
             fingerprint: None,
             templates: None,
+            pulls: Vec::new(),
         };
         let mut rb = client
             .post(&url)
@@ -766,8 +772,12 @@ async fn report(
         host: Some(rt.host()),
         fingerprint: Some(rt.fingerprint()),
         templates: Some(rt.templates()),
+        pulls: cfg.pulls.report(),
     })
 }
+
+/// How often a node with an image being pulled comes back to report.
+const PULL_RECHECK: Duration = Duration::from_secs(1);
 
 /// What happened when one command was offered to this node.
 enum Step {
@@ -821,6 +831,19 @@ fn run_one(
     // Exec and Branch are request/response: a caller is waiting, so they do
     // not go through the failure/backoff path that declarative commands use.
     match cmd {
+        // Only a look at where it stands: the pull runs on its own task, and
+        // how it ended goes up with the next report.
+        Command::PullTemplate {
+            name,
+            image,
+            attempt,
+        } => {
+            match rt.template_root(name) {
+                Ok(root) => cfg.pulls.ensure(name, image, *attempt, &root),
+                Err(e) => cfg.pulls.refuse(name, image, *attempt, format!("{e:#}")),
+            }
+            return Step::Done;
+        }
         Command::Exec {
             exec_id,
             id: sb,
@@ -958,6 +981,7 @@ fn run_one(
                 gateway_port,
                 token,
                 fetch,
+                egress,
             } => {
                 // A fork of a tag baked on another node: its image has to be
                 // here before anything is set up for the sandbox. The fetch
@@ -983,9 +1007,11 @@ fn run_one(
                         from_tag: from_tag.as_deref(),
                         gateway_port: *gateway_port,
                         token,
+                        egress,
                     }),
                 }
             }
+            Command::SetEgress { id, egress } => rt.set_egress(id, egress),
             Command::SetTier { id, tier } => rt.set_tier(id, *tier),
             Command::Destroy { id, net_index } => {
                 // Off this loop: the commands behind it should not wait for
@@ -1013,6 +1039,7 @@ fn run_one(
             Command::Exec { .. }
             | Command::Branch { .. }
             | Command::DropTag { .. }
+            | Command::PullTemplate { .. }
             | Command::SetBackend { .. } => {
                 unreachable!("answered above")
             }
@@ -1179,7 +1206,10 @@ async fn poll_once(
     gw: &mut Gateway,
     wake: &Arc<Wakeups>,
 ) -> Result<()> {
-    let hold = hold_for(deferred, cfg.hold, Instant::now());
+    let mut hold = hold_for(deferred, cfg.hold, Instant::now());
+    if cfg.pulls.busy() {
+        hold = hold.min(PULL_RECHECK);
+    }
     let mut req = report(cfg, rt, failing, gw, wake, Some(hold)).await?;
     req.deferred = still_deferred(deferred, Instant::now());
     let url = format!("{}/v1/node/poll", cfg.master_url.trim_end_matches('/'));
@@ -1282,11 +1312,13 @@ fn bearer(rb: reqwest::RequestBuilder, cfg: &NodeConfig) -> reqwest::RequestBuil
 pub(crate) fn command_id(cmd: &Command) -> &str {
     match cmd {
         Command::Create { id, .. }
+        | Command::SetEgress { id, .. }
         | Command::SetTier { id, .. }
         | Command::Destroy { id, .. }
         | Command::Branch { id, .. }
         | Command::Exec { id, .. } => id,
         Command::DropTag { tag } => tag,
+        Command::PullTemplate { name, .. } => name,
         Command::SetBackend { result_id, .. } => result_id,
     }
 }
@@ -1309,6 +1341,7 @@ mod tests {
             gateway_port: None,
             token: String::new(),
             fetch: None,
+            egress: Default::default(),
         }
     }
 
@@ -1452,6 +1485,7 @@ mod wake_tests {
             features: Vec::new(),
             backend_file: None,
             fetches: Default::default(),
+            pulls: Default::default(),
         };
         (cfg, Runtime::new(runtime).unwrap())
     }
@@ -1954,6 +1988,7 @@ mod wake_tests {
             gateway_port: None,
             token: String::new(),
             fetch: None,
+            egress: Default::default(),
         }
     }
 
@@ -2073,9 +2108,14 @@ mod wake_tests {
         let (cfg, rt) = meeting_node(dir.path(), Meeting::new(1));
         let w = Arc::new(Wakeups::new(|_, _, _| Ok(())));
         let mut failing = HashMap::new();
+        // Takes the connection and never answers, so the fetch is still
+        // running when the second fork asks. One refused at once could end
+        // first, and that fork would rightly read it as failed.
+        let source = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = source.local_addr().unwrap().to_string();
         let group = [
-            fork_from_elsewhere("a", "127.0.0.1:1"),
-            fork_from_elsewhere("b", "127.0.0.1:1"),
+            fork_from_elsewhere("a", &address),
+            fork_from_elsewhere("b", &address),
         ];
 
         let steps = run_group(&cfg, &rt, &mut failing, &w, &group, Instant::now(), 2);
@@ -2108,6 +2148,7 @@ mod wake_tests {
                 expires: i64::MAX,
                 token: "00".into(),
             })),
+            egress: Default::default(),
         }
     }
 

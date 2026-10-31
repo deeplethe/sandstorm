@@ -109,6 +109,13 @@ export interface ConsoleEvent {
 }
 
 /** A sandbox as `GET /v1/sandboxes` serves it. */
+/** What a sandbox may reach; see `Egress` in proto.rs. */
+export interface Egress {
+  internet: boolean;
+  allow?: string[];
+  deny?: string[];
+}
+
 export interface SandboxView {
   id: string;
   node_id: string;
@@ -120,6 +127,7 @@ export interface SandboxView {
   created_at_unix: number;
   netns?: string;
   memory_limit_mib?: number;
+  egress: Egress;
   volume: string | null;
   port: number | null;
   gateway_port?: number;
@@ -150,6 +158,14 @@ export interface SnapshotView {
 }
 
 /** `GET /v1/templates`: names; older masters sent objects with one. */
+/** `GET /v1/templates/pulls`: a template from an image, node by node. */
+export interface PullView {
+  name: string;
+  image: string;
+  ready: boolean;
+  nodes: { node_id: string; state: "pulling" | "ready" | "failed"; error?: string }[];
+}
+
 export type TemplateEntry = string | { name: string };
 
 /** `POST /v1/sandboxes/{id}/exec`. */

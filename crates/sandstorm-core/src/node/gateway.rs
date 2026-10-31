@@ -258,6 +258,31 @@ impl Gateway {
     }
 }
 
+/// Attempts at a port that is taken, and the wait between them: long enough
+/// for a child to reach its `exec`, short enough not to hold up the loop this
+/// runs on when the port really is someone else's.
+const BIND_TRIES: u32 = 20;
+const BIND_PAUSE: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Bind, allowing for a port that was only just let go.
+///
+/// A closed listener can outlive its close: a process forked by another
+/// thread holds a copy of every descriptor until it reaches `exec`, and a node
+/// starts `runsc`, `ip` and `iptables` all the time. Without this, a sandbox
+/// given a port just handed on was unreachable until the next report. Seen as
+/// `EADDRINUSE` on rebinding, only with other threads forking.
+async fn bind_soon(addr: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
+    for _ in 1..BIND_TRIES {
+        match tokio::net::TcpListener::bind(addr).await {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                tokio::time::sleep(BIND_PAUSE).await;
+            }
+            out => return out,
+        }
+    }
+    tokio::net::TcpListener::bind(addr).await
+}
+
 async fn spawn_one(
     e: Exposed,
     wake: Option<Arc<Wakeups>>,
@@ -267,7 +292,7 @@ async fn spawn_one(
     tokio::sync::oneshot::Sender<()>,
 )> {
     let bind: SocketAddr = format!("0.0.0.0:{}", e.gateway_port).parse()?;
-    let listener = tokio::net::TcpListener::bind(bind).await?;
+    let listener = bind_soon(bind).await?;
     let target = Arc::new(Target {
         id: e.id.clone(),
         sandbox_ip: e.sandbox_ip,
@@ -634,6 +659,31 @@ mod tests {
         drop(a);
         drop(b);
         (pa, pb)
+    }
+
+    #[tokio::test]
+    async fn a_port_let_go_a_moment_ago_can_be_bound() {
+        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = held.local_addr().unwrap();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            drop(held);
+        });
+        bind_soon(addr).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_port_someone_keeps_is_given_up_on() {
+        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = held.local_addr().unwrap();
+        let t0 = std::time::Instant::now();
+        let err = bind_soon(addr).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            t0.elapsed()
+        );
     }
 
     /// A plain HTTP server on `port` that answers every request with "hi".

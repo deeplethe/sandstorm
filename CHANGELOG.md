@@ -6,6 +6,40 @@ Versioning](https://semver.org/spec/v2.0.0.html) once it reaches
 
 ## Unreleased
 
+### A template can come from a container image
+
+`POST /v1/templates/from-image`, or "+ From an image" in the console, has every
+node pull an image from its registry and build the template its backend reads, with
+no Docker on the node. A node that joins later pulls it too. What the image says
+to run becomes the template, and `args`, `env` and `port` override it.
+
+Public images only. On Firecracker nodes the image needs `bash` and `python3`.
+See [the API](docs/API.md#post-v1templatesfrom-image).
+
+### A sandbox can be let out to the internet
+
+A sandbox could reach nothing beyond its own node, and there was no way to give
+one more. Each now has a policy: `internet` for public addresses, `allow` and
+`deny` for IPv4 addresses and CIDRs. The console sets it per sandbox and sets the
+default for new ones, and `POST /v1/sandboxes` takes `egress`. `internet` never
+includes private ranges, other sandboxes or the cloud metadata service.
+
+The default stays closed, so nothing changes until someone opens it. The E2B API
+now honours `allow_internet_access: false` and `network.allowOut` and `denyOut`,
+and takes `PUT /sandboxes/:id/network`. At creation `true` leaves the decision to
+the default, because older SDKs send it on every create. So on an E2B deployment,
+turn the default on for code that expects the internet. See
+[Egress](docs/API.md#egress).
+
+A sandbox's outbound traffic is now refused rather than dropped where it has no
+exception, so a closed sandbox looking a name up fails in about 0.1 s, not 5 s.
+A rootfs with no usable resolver gets 1.1.1.1 and 8.8.8.8 in the sandbox's layer
+under gVisor, as Firecracker guests already did.
+
+### A port handed on is bound the first time
+
+A sandbox given a port another had just left could fail to bind it, and stay unreachable until the node's next report. A closed listener lives on in any process another thread has just forked, until it reaches `exec`, and a node starts `runsc`, `ip` and `iptables` all the time. The gateway now tries again for up to 100 ms.
+
 ### A sandbox waiting to retry costs no polls
 
 The master answers a poll at once if it has a command, and it issues one for every sandbox that has not converged, including one its node is backing off on. So a node that dialled in skipped the command and polled again straight away until the retry was due: about 350 times a second and 40% of a core on bare metal for one failing sandbox, with a log line each time. A node now says what it is putting off and for how long, and the master leaves those out and parks the poll, so 33 s of it went from about 11,500 polls to about 20. Commands for other sandboxes still arrive at once.
@@ -29,6 +63,67 @@ The master asks for a destroy until a report no longer lists the sandbox, so a r
 ### A Firecracker sandbox woken from disk keeps the right time
 
 A sandbox its node had put to disk to make room still had the rule that refuses connections to a cold sandbox when it came back, and the restore set the guest's clock through that rule. So the wake waited out 2 s, and the clock was not set. The guest is let through as soon as it is running.
+
+### A master can name itself in its certificate
+
+`--tls-san` (`SANDSTORM_TLS_SAN`) adds a name or address to the master's
+certificate, and can be repeated. The certificate named only `127.0.0.1`,
+`localhost` and the `--bind` address, so a client that dialled a master by any
+other name was refused, and one bound to `0.0.0.0` could be verified only from its
+own machine. The same goes for a node's `--master-url`: only its registration is
+pinned, and every later call verifies the name. A master bound to `0.0.0.0` with
+no `--tls-san` now warns.
+
+### A branch refuses every removed `mode`
+
+`mode: "diff"`, or any other value, was ignored, so a caller who asked for a diff
+got a full branch and was not told. Everything but `"full"` now answers 410, as
+`docs/API.md` said. `GET /ca.pem` is documented.
+
+### The packaged service and image listen where a master does
+
+`packaging/systemd/sandstormd.service` and the `Dockerfile` bound port 8889. Both
+now use 8080. The service also no longer passes `--api-token-file
+/etc/sandstorm/api-token`, so its token is in `/var/lib/sandstorm/pki/api-token`
+like any other master's. A host on that unit gets a new token there on restart
+unless the old one is moved.
+
+### The Python `Controller` matches v0.6 too
+
+`branch_sandbox` needs a `tag`. `diff`, `measure_diff`, `mode`, `wait`, `prewarm`,
+`live_fork`, `hugepages` and `BranchMode` are gone, and a branch waits as long as
+the master may take. `list_templates` and `touch_sandbox` are new.
+
+### The TypeScript SDK and the MCP server reach a master at its default address
+
+Both defaulted to `http://127.0.0.1:8889`, where the v0.5 daemon listened. They
+now default to `https://127.0.0.1:8080`, where a master listens, and neither had
+a way to trust the private CA a master signs its certificate with. Both now read
+`SANDSTORM_CA`, as the Python `Controller` does, and the TypeScript `Controller`
+takes `caFile` too. The file replaces the trust store rather than adding to it,
+and there is no way to turn verification off.
+
+They could not start anything on a new master either: both needed a snapshot tag,
+and a tag only comes from branching a sandbox. Both now start from a template.
+`Sandbox.create({ template })` and `ctrl.createSandbox` are new in TypeScript,
+`spawn_sandboxes(template=...)` and `list_templates` in the MCP server, and
+`Sandbox.create` and `spawn_sandboxes` wait until a node reports the sandbox
+running and remove it if it never does. `touch` is new in both, since a branch
+needs a hot sandbox.
+
+This breaks callers. A v0.5 daemon, or a master bound to `127.0.0.1:8889`, needs
+`SANDSTORM_URL` set, and `caFile` with a custom `fetch` throws, since that `fetch`
+would ignore it. The MCP server stops at startup if `SANDSTORM_CA` cannot be read.
+What v0.6 refuses or ignores is gone rather than advertised: `diff`,
+`measure_diff`, `mode`, `wait`, `liveFork`/`live_fork`, `hugepages`, `prewarm` and
+the `BranchMode` type. A branch needs a `tag`. `Sandbox.eval` returns what the
+snippet printed, as a string. MCP `spawn_sandboxes` no longer sends
+`memory_limit_mib=256`, which overrode every template's memory, and takes
+`template` as its first argument. The TypeScript types describe the master's
+responses, so fields such as `pid` and `pause_ms` are gone.
+
+Exec, eval and branch now wait as long as the master may take rather than timing
+out first at 60 s.
 
 ### The Python `Sandbox` talks to the master
 

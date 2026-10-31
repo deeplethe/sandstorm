@@ -53,6 +53,9 @@ fi
 # so the guest can do DNS over the netns + host bridge NAT path.
 rm -f /etc/resolv.conf
 {
+    # A program's A and AAAA lookups can lose each other in NAT, and glibc
+    # waits that out. See RESOLVERS in bundle.rs.
+    echo "options single-request-reopen timeout:2"
     echo "nameserver 1.1.1.1"
     echo "nameserver 8.8.8.8"
 } > /etc/resolv.conf

@@ -74,8 +74,11 @@ addresses themselves, so the SDKs need the DNS.
   as root and switches to `user` for each process with `setuid`, which
   `CAP_SETUID`/`CAP_SETGID` allow without loosening anything; commands that
   need root should ask for `user="root"`.
+- **The internet is off by default,** which E2B's is not. Turn it on in the
+  console, or with `POST /v1/egress`; see [Egress](../../docs/API.md#egress).
 - **Not yet acted on:** the timeout deadline (a sandbox outlives its
   `timeout`; Sandstorm's own idle tiers still apply), `secure=false`,
-  `allowInternetAccess=false`, `trafficAccessToken`, metrics and logs.
-- **Template builds** (`e2b template build`) are not supported; build with
-  this recipe and register with `POST /v1/templates`.
+  `trafficAccessToken`, metrics and logs.
+- **Template builds** (`e2b template build`) are not supported. A template
+  needs envd in it, so build with this recipe and push the image for
+  [`from-image`](../../docs/API.md#post-v1templatesfrom-image), or register with `POST /v1/templates`.

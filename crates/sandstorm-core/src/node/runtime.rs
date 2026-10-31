@@ -42,6 +42,7 @@ pub struct CreateRequest<'a> {
     /// back open with nothing to verify.
     pub gateway_port: Option<u16>,
     pub token: &'a str,
+    pub egress: &'a crate::proto::Egress,
 }
 
 /// The node's own seed sandboxes, which a warm template image is taken
@@ -378,6 +379,7 @@ pub struct Runtime {
     pool: Option<Arc<net::Pool>>,
     /// Sandboxes still filling their memory; see `starting.rs`.
     starting: Arc<super::starting::Starting>,
+    egress: Arc<net::EgressRules>,
     /// Sandboxes just started from a warm image; see `drop_warm_image`.
     warm_started: Arc<parking_lot::Mutex<HashMap<String, WarmStart>>>,
 }
@@ -435,6 +437,7 @@ impl Runtime {
             fp: Arc::default(),
             pool,
             starting: Arc::default(),
+            egress: Arc::default(),
             warm_started: Arc::default(),
         })
     }
@@ -538,6 +541,7 @@ impl Runtime {
                 found.push(ObservedSandbox {
                     ip: self.ip_of(&id),
                     net_index: self.net_index_of(&id),
+                    egress: Some(self.egress.of(&id)),
                     id,
                     tier: Tier::Snapshot,
                     serving: false,
@@ -554,6 +558,7 @@ impl Runtime {
             found.push(ObservedSandbox {
                 ip: self.ip_of(&id),
                 net_index: self.net_index_of(&id),
+                egress: Some(self.egress.of(&id)),
                 id,
                 tier: if frozen { Tier::Frozen } else { Tier::Hot },
                 serving: !frozen,
@@ -695,6 +700,7 @@ impl Runtime {
             from_tag,
             gateway_port,
             token,
+            egress,
         } = *req;
         let rootfs = self.template_rootfs(template)?;
         let spec: TemplateSpec = serde_json::from_value(spec.clone())
@@ -722,6 +728,9 @@ impl Runtime {
                 let (slot, pending) =
                     net::setup_started(&self.cfg.net, id, i, self.pool.as_deref())
                         .with_context(|| format!("setting up the network for {id}"))?;
+                self.egress
+                    .set(id, slot.sandbox_ip, egress)
+                    .with_context(|| format!("setting what {id} may reach"))?;
                 if self.engine.veth_needed_to_start() {
                     pending
                         .wait()
@@ -1097,6 +1106,7 @@ impl Runtime {
                 from_tag: None,
                 gateway_port: None,
                 token: "",
+                egress: &Default::default(),
             })?;
             let ip = self.sandbox_ip(&seed).context("the seed has no address")?;
             let deadline = Instant::now() + Duration::from_secs(w.ready_timeout_secs);
@@ -1156,7 +1166,8 @@ impl Runtime {
     /// The name becomes a path component, so it must be a plain name: a
     /// master that could send `../..` here would be choosing a directory on
     /// the node's disk.
-    fn template_rootfs(&self, name: &str) -> Result<PathBuf> {
+    /// Where this node's backend reads template `name` from, there or not.
+    pub fn template_root(&self, name: &str) -> Result<PathBuf> {
         if name.is_empty() {
             bail!("no template named");
         }
@@ -1164,9 +1175,13 @@ impl Runtime {
         {
             bail!("template name {name:?} is not a plain name");
         }
-        let dir = self
+        Ok(self
             .engine
-            .template_root(&self.cfg.work_dir.join("templates").join(name));
+            .template_root(&self.cfg.work_dir.join("templates").join(name)))
+    }
+
+    fn template_rootfs(&self, name: &str) -> Result<PathBuf> {
+        let dir = self.template_root(name)?;
         if !dir.exists() {
             bail!(
                 "template {name} is not installed on this node (no {})",
@@ -1255,7 +1270,10 @@ impl Runtime {
             }
             (Tier::Hot, Tier::Snapshot) => self.checkpoint(id),
             (Tier::Snapshot, Tier::Hot) => self.restore(id),
-            (Tier::Snapshot, Tier::Detached) => self.detach(id),
+            (Tier::Snapshot, Tier::Detached) => {
+                self.detach(id)?;
+                self.egress.clear(id)
+            }
             // Nothing on this node observes a detached sandbox, so the
             // master issues Create for it instead; create() notices the
             // archive on the volume and unpacks it.
@@ -1581,6 +1599,16 @@ impl Runtime {
 
     /// Free a sandbox's address now, ahead of a `destroy_with_net` that will
     /// run later; see `net::quiesce`.
+    /// Replace what a sandbox may reach, in any tier: rules follow its
+    /// address, which it keeps while it exists.
+    pub fn set_egress(&self, id: &str, egress: &crate::proto::Egress) -> Result<()> {
+        let index = self
+            .net_index_of(id)
+            .with_context(|| format!("{id} has no address on this node"))?;
+        self.egress
+            .set(id, self.cfg.net.slot(id, index)?.sandbox_ip, egress)
+    }
+
     pub fn quiesce_net(&self, id: &str, net_index: Option<u32>) {
         if let Some(i) = net_index.or_else(|| self.net_index_of(id)) {
             let _ = net::quiesce(&self.cfg.net, id, i);
@@ -1598,6 +1626,9 @@ impl Runtime {
             .and_then(|i| self.cfg.net.slot(id, i).ok())
             .map(|s| s.sandbox_ip);
         self.destroy(id)?;
+        self.egress
+            .clear(id)
+            .with_context(|| format!("removing what {id} was allowed to reach"))?;
         if let Some(i) = index {
             net::teardown(&self.cfg.net, id, i, self.pool.as_deref())
                 .with_context(|| format!("tearing down the network for {id}"))?;
@@ -2112,6 +2143,7 @@ mod backend_tests {
                 from_tag: None,
                 gateway_port: None,
                 token: "",
+                egress: &Default::default(),
             })
         };
 

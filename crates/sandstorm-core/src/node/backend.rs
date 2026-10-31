@@ -484,8 +484,8 @@ mod tests {
     fn a_restore_that_fails_removes_the_container() {
         let dir = TempDir::new().unwrap();
         let rt = runsc(&dir, "restore");
-        assert!(rt.restore("sb1", dir.path(), dir.path()).is_err());
-        assert_eq!(calls(&dir), "restore delete ");
+        let err = rt.restore("sb1", dir.path(), dir.path()).unwrap_err();
+        assert_eq!(calls(&dir), "restore delete ", "{err:#}");
     }
 
     #[test]

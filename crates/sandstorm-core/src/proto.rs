@@ -181,6 +181,65 @@ pub struct PollRequest {
     /// nodes, which are placed on as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub templates: Option<Vec<String>>,
+    /// Where each image pull on this node stands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pulls: Vec<TemplatePull>,
+}
+
+/// How an image says to run it, read from its config.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageConfig {
+    /// `Entrypoint` then `Cmd`.
+    pub args: Vec<String>,
+    pub env: Vec<String>,
+    pub cwd: Option<String>,
+    /// The lowest port it exposes.
+    pub port: Option<u16>,
+}
+
+/// One template being pulled from an image, or the last word on one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplatePull {
+    pub name: String,
+    pub image: String,
+    /// Which attempt this is. A retry is a new number, so the outcome of an
+    /// old attempt is not taken for the new one's.
+    #[serde(default)]
+    pub attempt: u32,
+    pub done: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<ImageConfig>,
+}
+
+impl TemplatePull {
+    pub fn running(name: &str, image: &str, attempt: u32) -> Self {
+        Self {
+            name: name.into(),
+            image: image.into(),
+            attempt,
+            done: false,
+            error: None,
+            config: None,
+        }
+    }
+
+    pub fn done(name: &str, image: &str, attempt: u32, config: ImageConfig) -> Self {
+        Self {
+            done: true,
+            config: Some(config),
+            ..Self::running(name, image, attempt)
+        }
+    }
+
+    pub fn failed(name: &str, image: &str, attempt: u32, error: String) -> Self {
+        Self {
+            done: true,
+            error: Some(error),
+            ..Self::running(name, image, attempt)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +277,76 @@ pub struct ObservedSandbox {
     /// orphan can have its address reclaimed.
     #[serde(default)]
     pub net_index: Option<u32>,
+    /// The egress rules in force for it, read from what the node installed.
+    /// A restarted node has none, which is how the master knows to send
+    /// them again. Absent from a node too old to have any.
+    #[serde(default)]
+    pub egress: Option<Egress>,
+}
+
+/// What a sandbox may reach beyond its own node. The default, nothing, is
+/// what every sandbox had before this existed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Egress {
+    /// The public internet: everything but private, link-local and
+    /// otherwise unroutable addresses (`NOT_PUBLIC` in `node/net.rs`).
+    #[serde(default)]
+    pub internet: bool,
+    /// IPv4 addresses and CIDRs always reachable, private ones included.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// IPv4 addresses and CIDRs never reachable, unless `allow` names them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<String>,
+}
+
+/// More than this is a mistake or a policy that belongs in a proxy: each
+/// entry is one firewall rule every new connection from the sandbox walks.
+const MAX_EGRESS_ENTRIES: usize = 64;
+
+impl Egress {
+    /// Whether it opens nothing, and so needs no rule on the node.
+    pub fn is_closed(&self) -> bool {
+        !self.internet && self.allow.is_empty()
+    }
+
+    /// Every entry as a canonical CIDR, so what the master stores compares
+    /// equal to what a node reports, or why it cannot be.
+    pub fn canonical(self) -> Result<Self, String> {
+        if self.allow.len() + self.deny.len() > MAX_EGRESS_ENTRIES {
+            return Err(format!(
+                "at most {MAX_EGRESS_ENTRIES} allow and deny entries, not {}",
+                self.allow.len() + self.deny.len()
+            ));
+        }
+        let list = |l: Vec<String>| {
+            let mut out: Vec<String> = Vec::with_capacity(l.len());
+            for entry in l {
+                let c = canonical_cidr(&entry)?;
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+            Ok::<_, String>(out)
+        };
+        Ok(Self {
+            internet: self.internet,
+            allow: list(self.allow)?,
+            deny: list(self.deny)?,
+        })
+    }
+}
+
+fn canonical_cidr(entry: &str) -> Result<String, String> {
+    let (addr, prefix) = entry.trim().split_once('/').unwrap_or((entry.trim(), "32"));
+    let why = || format!("{entry:?} is not an IPv4 address or CIDR; domains are not supported");
+    let addr: std::net::Ipv4Addr = addr.parse().map_err(|_| why())?;
+    let prefix: u32 = prefix.parse().ok().filter(|p| *p <= 32).ok_or_else(why)?;
+    let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
+    Ok(format!(
+        "{}/{prefix}",
+        std::net::Ipv4Addr::from(u32::from(addr) & mask)
+    ))
 }
 
 /// Master -> node, in reply to a poll. Never a push.
@@ -279,7 +408,21 @@ pub enum Command {
         /// as large as the largest.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fetch: Option<Box<FetchFrom>>,
+        /// What it may reach. Here as well as in `SetEgress` so a sandbox
+        /// that fetches something as it starts has the network it needs.
+        #[serde(default)]
+        egress: Egress,
     },
+    /// Have this template, pulled from this image if it is not here. Sent
+    /// while the node reports no pull of this attempt, so it is declarative.
+    PullTemplate {
+        name: String,
+        image: String,
+        attempt: u32,
+    },
+    /// Replace what a sandbox may reach. Declarative, like `SetTier`: the
+    /// master sends it while a node reports anything else.
+    SetEgress { id: String, egress: Egress },
     /// Move an existing sandbox to a tier. One step at a time when demoting;
     /// promotion goes straight to hot.
     SetTier { id: String, tier: Tier },
@@ -354,4 +497,63 @@ pub struct CommandResult {
     /// Bytes the branch's image occupies, for a Branch.
     #[serde(default)]
     pub size_bytes: u64,
+}
+
+#[cfg(test)]
+mod egress_tests {
+    use super::*;
+
+    fn with(allow: &[&str], deny: &[&str]) -> Egress {
+        Egress {
+            internet: false,
+            allow: allow.iter().map(|s| s.to_string()).collect(),
+            deny: deny.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// Stored and reported forms have to compare equal, or the master
+    /// sends the same rules for ever.
+    #[test]
+    fn entries_become_canonical_cidrs() {
+        let e = with(&["8.8.8.8", " 10.1.2.3/8 ", "10.0.0.0/8"], &["0.0.0.0/0"])
+            .canonical()
+            .unwrap();
+        assert_eq!(e.allow, ["8.8.8.8/32", "10.0.0.0/8"]);
+        assert_eq!(e.deny, ["0.0.0.0/0"]);
+    }
+
+    #[test]
+    fn what_is_not_ipv4_is_refused_by_name() {
+        for bad in [
+            "example.com",
+            "::1",
+            "1.2.3.4/33",
+            "1.2.3",
+            "1.2.3.4/x",
+            "-j ACCEPT",
+        ] {
+            let why = with(&[bad], &[]).canonical().unwrap_err();
+            assert!(why.contains("not an IPv4"), "{bad}: {why}");
+        }
+    }
+
+    #[test]
+    fn a_policy_too_long_to_walk_is_refused() {
+        let many: Vec<String> = (0..65).map(|i| format!("10.0.0.{i}")).collect();
+        let e = Egress {
+            allow: many,
+            ..Default::default()
+        };
+        assert!(e.canonical().unwrap_err().contains("at most 64"));
+    }
+
+    /// A node from before egress reports none; old rows and commands have
+    /// none. Both must read as closed, not fail to parse.
+    #[test]
+    fn absent_means_closed() {
+        let o: ObservedSandbox =
+            serde_json::from_str(r#"{"id":"a","tier":"hot","serving":true}"#).unwrap();
+        assert_eq!(o.egress, None);
+        assert!(Egress::default().is_closed());
+    }
 }

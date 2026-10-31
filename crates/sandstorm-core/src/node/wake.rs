@@ -578,6 +578,7 @@ mod tests {
             serving: tier.is_serving(),
             ip: None,
             net_index: None,
+            egress: None,
         }
     }
 

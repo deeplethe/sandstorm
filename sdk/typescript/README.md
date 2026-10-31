@@ -1,6 +1,6 @@
 # @deeplethe/sandstorm
 
-TypeScript client for [sandstorm](https://github.com/deeplethe/sandstorm) — the open-source fork-on-write microVM primitive for AI agents.
+TypeScript client for [Sandstorm](https://github.com/deeplethe/sandstorm): gVisor and Firecracker sandboxes across a fleet of nodes.
 
 ```bash
 npm install @deeplethe/sandstorm
@@ -11,43 +11,60 @@ Requires Node 20+. (The code only needs the global `fetch`, which Node 18
 had too; the floor is 20 because that is what the SDK is tested on -- Node
 18 has been end-of-life since April 2025.)
 
+## Connecting to a master
+
+A master listens on `https://127.0.0.1:8080` unless it was bound elsewhere, and
+signs its certificate with a CA of its own. So the public trust store cannot
+verify it, and until you give the SDK that CA every call fails with
+`fetch failed`. Get the CA from the master's `pki/ca.pem`, or fetch it:
+
+```bash
+curl -k https://127.0.0.1:8080/ca.pem -o ca.pem
+export SANDSTORM_CA=$PWD/ca.pem
+export SANDSTORM_TOKEN=$(sudo cat /var/lib/sandstorm/pki/api-token)
+```
+
+`-k` is for this one download. Check `ca.pem` against the fingerprint in a
+registration token before you trust it. There is deliberately no way to turn
+verification off in the SDK: an unverified control plane carries the API token
+and every command run inside a sandbox.
+
+The certificate names `127.0.0.1`, `localhost` and the master's `--bind`
+address. To connect by any other name, start the master with
+`--tls-san master.example`.
+
 ## Quick start
 
 ```ts
 import { Controller, Sandbox } from "@deeplethe/sandstorm";
 
-// Either: spawn + use + cleanup
+// Either: create + use + cleanup. A master starts sandboxes from registered
+// templates; `ctrl.listTemplates()` names them.
 const result = await Sandbox.with(
-  { snapshotTag: "python-3-12-slim" },
+  { template: "python" },
   async (sb) => sb.exec(["python3", "-c", "print(2+2)"]),
 );
 console.log(result.stdout); // "4\n"
 
-// Or: long-lived sandbox with BRANCH (sandstorm's killer move)
-const ctrl = new Controller({
-  baseUrl: "http://127.0.0.1:8889",
-  token: process.env.SANDSTORM_TOKEN,
-});
-const [source] = await ctrl.spawnSandboxes({
-  snapshotTag: "langgraph-react",
-});
-await ctrl.execCommand(source.id, ["python3", "/opt/agent.py"], { sandboxToken: source.token });
+// Or: long-lived sandbox with BRANCH
+const source = await Sandbox.create({ template: "python" });
+await source.exec(["python3", "/opt/agent.py"]);
 
-// BRANCH: pause source briefly, snapshot, resume. Children inherit
-// source's exact state and diverge under copy-on-write.
-// v0.3+: opt into diff mode for ~200 ms source-pause regardless of
-// memory size (143× ceiling on 4 GiB SSD).
-const checkpoint = await ctrl.branchSandbox(source.id, {
-  tag: "after-warmup",
-  diff: true,
-});
+// BRANCH: checkpoint it into a tag. The parent keeps running, after a short
+// pause, and children inherit its exact state.
+const checkpoint = await source.branch({ tag: "after-warmup" });
 
 // Fan out N children from the checkpoint.
+const ctrl = new Controller();
 const children = await ctrl.spawnSandboxes({
   snapshotTag: checkpoint.tag,
   n: 4,
 });
 ```
+
+`ctrl.createSandbox` and `ctrl.spawnSandboxes` answer before a node has started
+the sandbox. `Sandbox.create` waits for it, and for anything you made yourself,
+`await new Sandbox(ctrl, info).waitUntilRunning()` does the same.
 
 ## API surface
 
@@ -57,33 +74,42 @@ Surface parity with the Python SDK (`pip install sandstorm-sdk`):
 |---|---|
 | `Controller.list_snapshots()` | `ctrl.listSnapshots()` |
 | `Controller.delete_snapshot(tag)` | `ctrl.deleteSnapshot(tag)` |
-| `Controller.spawn_sandboxes(...)` | `ctrl.spawnSandboxes({ snapshotTag, n, prewarm, ... })` |
+| `Controller.create_sandbox(...)` | `ctrl.createSandbox({ template, snapshotTag, ... })` |
+| `Controller.spawn_sandboxes(...)` | `ctrl.spawnSandboxes({ snapshotTag, n, ... })` |
 | `Controller.list_sandboxes()` | `ctrl.listSandboxes()` |
 | `Controller.get_sandbox(id)` | `ctrl.getSandbox(id)` |
 | `Controller.kill_sandbox(id)` | `ctrl.killSandbox(id)` |
-| `Controller.branch_sandbox(id, tag)` | `ctrl.branchSandbox(id, { tag, diff, measure_diff })` |
+| `Controller.branch_sandbox(id, tag)` | `ctrl.branchSandbox(id, { tag })` |
 | `Controller.exec_command(id, args)` | `ctrl.execCommand(id, args, { timeoutSecs })` |
-| `Controller.eval_code(id, code)` | `ctrl.evalCode(id, code)` |
+| `Controller.eval_code(id, code)` | `ctrl.evalCode(id, code, token, timeoutSecs)` |
 | `Controller.ping_sandbox(id)` | `ctrl.pingSandbox(id)` |
 
-Snake-case API field names are preserved over the wire (the daemon
+Also here: `ctrl.listTemplates()`, `ctrl.getSnapshot(tag)`,
+`ctrl.touchSandbox(id)`, `ctrl.setSandboxTier(id, tier)` and
+`ctrl.retrySandbox(id)`.
+
+Snake-case API field names are preserved over the wire (the master
 expects them), but TypeScript-side argument names are camelCase.
 
 ### `Sandbox` (higher-level wrapper)
 
 ```ts
-const sb = await Sandbox.create({ snapshotTag: "python-3-12-slim" });
+const sb = await Sandbox.create({ template: "python" });
 const result = await sb.exec(["echo", "hi"]);
-const value = await sb.eval("2+2");        // 4
-const branch = await sb.branch({ diff: true });
+const printed = await sb.eval("print(2+2)"); // "4\n"
+const branch = await sb.branch({ tag: "checkpoint-1" });
 await sb.kill();
 ```
+
+`eval` returns what the snippet printed, so use `print(...)`, not a bare
+expression. `branch` needs a hot sandbox: the master answers 409 otherwise, and
+`sb.touch()` wakes it.
 
 Keep the creation response, including its `token`: v0.6 requires this sandbox
 token in addition to the API Bearer credential for exec/eval/ping. `Sandbox.create`
 forwards it automatically, as does `new Sandbox(ctrl, info)` when `info` is the
-creation result. GET/LIST responses do not contain it. Older servers may omit
-it; missing or incorrect tokens still produce the server's authentication error.
+creation result. GET/LIST responses do not contain it. Missing or incorrect
+tokens produce the server's authentication error.
 
 `Sandbox.with(options, fn)` is the recommended pattern for short-lived
 work — automatic cleanup even on exception.
@@ -92,29 +118,22 @@ work — automatic cleanup even on exception.
 
 ```ts
 new Controller({
-  baseUrl: "http://127.0.0.1:8889",       // or env SANDSTORM_URL
+  baseUrl: "https://127.0.0.1:8080",      // or env SANDSTORM_URL
   token: "abc123",                         // or env SANDSTORM_TOKEN
+  caFile: "ca.pem",                        // or env SANDSTORM_CA
   timeoutMs: 60_000,                       // default
   fetch: customFetch,                      // optional (testing / older Node)
 });
 ```
 
-## v0.3 fast-BRANCH (diff snapshots)
+`caFile` replaces the trust store rather than adding to it: the master's CA is
+the only issuer that can sign for it. It needs Node, and the file is read on the
+first request, so a wrong path fails there. A custom `fetch` does its own TLS, so
+passing it with `caFile` throws, and `SANDSTORM_CA` does not apply to it.
 
-sandstorm v0.3 added diff-snapshot BRANCH. Opt in per-call:
-
-```ts
-const branch = await ctrl.branchSandbox(sandboxId, { diff: true });
-```
-
-Measured numbers (full table in
-[RESULTS-v0.3.md](https://github.com/deeplethe/sandstorm/blob/v0.5.3/bench/pause-window/RESULTS-v0.3.md)):
-
-- Idle 4 GiB SSD source: 29 s → 205 ms = **143×**
-- Typical agent workload (30-300 MiB dirty): **6-15×**
-- 5 consecutive BRANCHes (v0.3.1+): **14× aggregate**
-
-Requires `sandstorm-controller >= 0.3.0`. Older daemons return 400 on `diff: true`.
+`timeoutMs` covers ordinary calls. Exec and eval wait for `timeoutSecs` plus 25 s
+when that is longer, and a branch for 185 s, so the master's own answer arrives
+first.
 
 ## Error handling
 

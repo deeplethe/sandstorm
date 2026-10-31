@@ -28,16 +28,17 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::api::{self, ApiErr, NewSandbox, SetTierReq, St, MAX_FAILURES};
+use super::api::{self, ApiErr, EgressChange, NewSandbox, SetTierReq, St, MAX_FAILURES};
 use super::SANDBOX_TOKEN_HEADER;
 use crate::identity::random_token;
 use crate::node::PORT_HEADER;
+use crate::proto::Egress;
 use crate::state::{now_secs, E2bSandbox, Sandbox};
 use crate::tier::Tier;
 
@@ -194,6 +195,7 @@ pub fn router(e: Arc<E2b>) -> Router {
         .route("/sandboxes/:id/connect", post(connect))
         .route("/sandboxes/:id/resume", post(resume))
         .route("/sandboxes/:id/pause", post(pause))
+        .route("/sandboxes/:id/network", put(set_network))
         .route("/sandboxes/:id/timeout", post(set_timeout))
         .route("/sandboxes/:id/refreshes", post(refresh))
         .route("/sandboxes/:id/logs", get(logs))
@@ -523,15 +525,78 @@ struct NewE2bSandbox {
     #[serde(default)]
     auto_pause: Option<bool>,
     // Accepted, and not acted on in this version: envd always gets an
-    // access token (as if `secure` were true), and egress is the node's
-    // policy. Both are P1 in the RFC's E2B section; they are named here so
-    // nobody mistakes their absence for an oversight.
+    // access token (as if `secure` were true). It is P1 in the RFC's E2B
+    // section; it is named here so nobody mistakes its absence for an
+    // oversight.
     #[allow(dead_code)]
     #[serde(default)]
     secure: Option<bool>,
-    #[allow(dead_code)]
     #[serde(default, rename = "allow_internet_access")]
     allow_internet_access: Option<bool>,
+    #[serde(default)]
+    network: Option<E2bNetwork>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct E2bNetwork {
+    #[serde(default)]
+    allow_out: Vec<String>,
+    #[serde(default)]
+    deny_out: Vec<String>,
+}
+
+/// What an E2B sandbox may reach, starting from the cluster's default.
+///
+/// `allow_internet_access: true` opens nothing the default has closed: older
+/// SDKs send it on every create unless told otherwise (2.50 does, 2.62 does
+/// not), so it says nothing about what the caller wants, and honouring it
+/// would take the decision out of the operator's hands. `false` is always
+/// deliberate.
+fn e2b_egress(
+    default: Egress,
+    internet: Option<bool>,
+    network: Option<E2bNetwork>,
+) -> Result<Egress, String> {
+    let network = network.unwrap_or_default();
+    Egress {
+        internet: default.internet && internet != Some(false),
+        allow: [default.allow, network.allow_out].concat(),
+        deny: [default.deny, network.deny_out].concat(),
+    }
+    .canonical()
+}
+
+/// A body that names a field replaces it, as on `POST /v1/sandboxes/:id/egress`.
+/// `allow_internet_access` is honoured here either way: nothing sends this
+/// by default.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct E2bNetworkUpdate {
+    #[serde(default, alias = "allow_internet_access")]
+    allow_internet_access: Option<bool>,
+    #[serde(default)]
+    allow_out: Option<Vec<String>>,
+    #[serde(default)]
+    deny_out: Option<Vec<String>>,
+}
+
+async fn set_network(
+    State(e): State<Arc<E2b>>,
+    Path(id): Path<String>,
+    Json(req): Json<E2bNetworkUpdate>,
+) -> Result<StatusCode, E2bErr> {
+    let _ = api::set_sandbox_egress(
+        State(e.st.clone()),
+        Path(id),
+        Json(EgressChange {
+            internet: req.allow_internet_access,
+            allow: req.allow_out,
+            deny: req.deny_out,
+        }),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn create(
@@ -551,6 +616,9 @@ async fn create(
             ),
         ));
     }
+    let default = e.st.store().default_egress().map_err(E2bErr::internal)?;
+    let egress = e2b_egress(default, req.allow_internet_access, req.network)
+        .map_err(|why| E2bErr::new(StatusCode::BAD_REQUEST, why))?;
     let timeout = req.timeout.unwrap_or(DEFAULT_TIMEOUT_SECS).max(0);
     let rec = E2bSandbox {
         id: new_sandbox_id(),
@@ -571,7 +639,7 @@ async fn create(
 
     let _ = api::create_sandbox(
         State(e.st.clone()),
-        Json(NewSandbox::named(&rec.id, &template, ENVD_PORT)),
+        Json(NewSandbox::named(&rec.id, &template, ENVD_PORT).egress(egress)),
     )
     .await?;
     // Bound first: in an `if let` the store guard would live across the
@@ -945,6 +1013,44 @@ pub(super) fn strip_inbound(h: &mut HeaderMap) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn open() -> Egress {
+        Egress {
+            internet: true,
+            ..Default::default()
+        }
+    }
+
+    /// Older SDKs send `true` on every create, so it cannot be what opens a
+    /// cluster whose operator has closed it.
+    #[test]
+    fn the_sdks_true_does_not_overrule_a_closed_cluster() {
+        let e = e2b_egress(Egress::default(), Some(true), None).unwrap();
+        assert!(!e.internet);
+        assert!(e2b_egress(open(), Some(true), None).unwrap().internet);
+        assert!(e2b_egress(open(), None, None).unwrap().internet);
+    }
+
+    #[test]
+    fn false_closes_an_open_cluster() {
+        assert!(!e2b_egress(open(), Some(false), None).unwrap().internet);
+    }
+
+    #[test]
+    fn network_lists_are_added_to_the_default() {
+        let net: E2bNetwork =
+            serde_json::from_value(json!({"allowOut": ["8.8.8.8"], "denyOut": ["1.2.3.4/32"]}))
+                .unwrap();
+        let e = e2b_egress(open(), None, Some(net)).unwrap();
+        assert_eq!(e.allow, ["8.8.8.8/32"]);
+        assert_eq!(e.deny, ["1.2.3.4/32"]);
+        let net = E2bNetwork {
+            allow_out: vec!["example.com".into()],
+            ..Default::default()
+        };
+        let why = e2b_egress(open(), None, Some(net)).unwrap_err();
+        assert!(why.contains("domains are not supported"), "{why}");
+    }
 
     #[test]
     fn ids_are_one_dns_label_with_no_dash() {

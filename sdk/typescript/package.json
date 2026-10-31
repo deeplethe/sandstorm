@@ -1,7 +1,7 @@
 {
   "name": "@deeplethe/sandstorm",
   "version": "0.5.3",
-  "description": "TypeScript client for sandstorm — open-source fork-on-write microVM primitive for AI agents",
+  "description": "TypeScript client for Sandstorm: gVisor and Firecracker sandboxes across a fleet of nodes",
   "license": "Apache-2.0",
   "author": "Deeplethe <info@deeplethe.com>",
   "homepage": "https://github.com/deeplethe/sandstorm",
@@ -13,7 +13,7 @@
   "bugs": "https://github.com/deeplethe/sandstorm/issues",
   "keywords": [
     "sandbox",
-    "microvm",
+    "gvisor",
     "firecracker",
     "fork",
     "ai-agents",

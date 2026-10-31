@@ -84,7 +84,13 @@ Agent 大部分时间都处于等待状态。Sandstorm 针对这一特点设计�
 
 流量测试为每节点 40 个沙箱，少数沙箱拿到大部分请求；一个 gVisor 节点只放得下约 12 个醒着的。p50 在 gVisor 上是 6-10 ms，KVM 上是 7-50 ms，PVM 上是 4-14 ms；p99 分别约 2 s、0.8-1.9 s 和 1.8-3.6 s，是需要等恢复的请求。2 秒内起不来的唤醒会被拒绝，而不是排队。这里的 gVisor 节点同时恢复 2 个、排队 4 个，所以同时唤醒 10 个及以上时，6 个得到响应，其余立刻收到 503。
 
-常驻内存统计的是借助 swap 还开着的数量，不代表都能快速响应。PVM 主机不用 swap 只放得下约 8 个 64 MiB 应用，所以测试规模更小：流量测试用 20 个沙箱，也没有测 1 GiB 应用。Firecracker 的 512 MiB 和 1 GiB 数据各只有一个样本。[全部数据和测试方法](bench/fleet/results/2026-10-31/README.md)。
+「内存驻留数量」（Kept in memory）这一指标统计的是在启用 Swap 的情况下，仍然保持运行的沙箱数量，而不是沙箱能够多快地响应请求。
+
+在不启用 Swap 的情况下，PVM 主机的内存最多只能容纳约 8 个运行 64 MiB 应用的沙箱。因此，实际流量测试采用了较小的集群规模，共运行 20 个沙箱，且没有测试 1 GiB 的应用。
+
+Firecracker 在 512 MiB 和 1 GiB 两种内存配置下的测试结果，均仅基于一次采样。
+
+查看[完整测试数据及测试方法](bench/fleet/results/2026-10-31/README.md)
 
 ## 测试方法
 
@@ -113,6 +119,8 @@ scripts/fleet.sh up --master m1 --nodes n1,n2,n3 --listen 80
 scripts/fleet.sh seed     # 在每个节点放一个模板
 scripts/fleet.sh verify   # 启动一个沙箱，确认真的能跑
 ```
+
+其他机器上的客户端会校验它连接时用的名称，而 master 的证书只包含 `127.0.0.1`、`localhost` 和 `--bind` 地址。用 `--tls-san master` 加上你的名称，这个参数可以重复。
 
 **已经装好的节点**，用 `SANDSTORM_LISTEN=0.0.0.0:80` 监听。第一次启动时它会把配对码写到 `/var/lib/sandstorm/pki/node/pairing-code`。把地址和配对码交给 master，CA 和 API token 用 master 上 `/var/lib/sandstorm/pki` 里的那两个文件：
 

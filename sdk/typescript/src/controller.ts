@@ -5,19 +5,28 @@ import type {
   ExecResult,
   PingResult,
   SandboxInfo,
+  SnapshotDetail,
   SnapshotInfo,
   SpawnOptions,
+  Tier,
 } from "./types.js";
+import { fetchWithCa } from "./tls.js";
+
+/** Where a master listens unless it was bound elsewhere. */
+const DEFAULT_URL = "https://127.0.0.1:8080";
+
+/** The master answers 504 when a node takes longer than 180 s to branch. */
+const BRANCH_TIMEOUT_MS = 185_000;
+
+/** Header carrying a sandbox's own access token (RFC 16.5 layer two). */
+export const SANDBOX_TOKEN_HEADER = "x-sandstorm-sandbox-token";
 
 /**
- * Raised on non-2xx responses from the daemon.
+ * Raised on non-2xx responses from the master.
  *
  * Inspect `status` and `body` to distinguish 404 (sandbox/snapshot
  * missing) from 409 (tag collision) from 500 (internal).
  */
-/** Header carrying a sandbox's own access token (RFC 16.5 layer two). */
-export const SANDBOX_TOKEN_HEADER = "x-sandstorm-sandbox-token";
-
 export class ControllerError extends Error {
   readonly status: number;
   readonly body: unknown;
@@ -36,43 +45,100 @@ export class ControllerError extends Error {
 
 export interface ControllerOptions {
   /**
-   * Daemon base URL. Defaults to env `SANDSTORM_URL` then
-   * `http://127.0.0.1:8889`.
+   * Master base URL. Defaults to env `SANDSTORM_URL` then
+   * `https://127.0.0.1:8080`, where a master listens by default.
    */
   baseUrl?: string;
   /**
-   * Bearer token. Defaults to env `SANDSTORM_TOKEN`. Required when the
-   * daemon was started with `--token-file`.
+   * The master's API token. Defaults to env `SANDSTORM_TOKEN`.
    */
   token?: string;
   /**
-   * Per-request timeout in milliseconds. Default 60_000.
-   * Branching a large source can take several seconds before v0.3's
-   * diff mode kicks in.
+   * Per-request timeout in milliseconds. Default 60_000. Exec, eval and
+   * branch wait longer when the master may legitimately take longer.
    */
   timeoutMs?: number;
   /**
+   * PEM bundle to verify an `https://` master against. Defaults to env
+   * `SANDSTORM_CA`. Node only.
+   *
+   * A v0.6 master serves TLS by default under a CA it generates itself,
+   * so the public trust store cannot verify it and every call fails with
+   * `fetch failed`. Point this at the master's `pki/ca.pem`, or fetch it:
+   * the master serves it unauthenticated for exactly this reason.
+   *
+   * ```sh
+   * curl -k https://127.0.0.1:8080/ca.pem -o ca.pem
+   * ```
+   *
+   * Check it against the fingerprint in a registration token before you
+   * trust it. There is deliberately no way to turn verification off: an
+   * unverified control plane carries the API token and every command run
+   * inside a sandbox.
+   */
+  caFile?: string;
+  /**
    * Custom fetch implementation. Defaults to global `fetch`. Provide
    * `undici`'s fetch in Node test scenarios that want to record
-   * traffic, or polyfill for older Node.
+   * traffic, or polyfill for older Node. It does its own TLS, so it
+   * cannot be combined with `caFile`, and `SANDSTORM_CA` does not apply.
    */
   fetch?: typeof fetch;
 }
 
+/** Where and how to make a sandbox. See `POST /v1/sandboxes` in docs/API.md. */
+export interface CreateOptions {
+  /** Start from this template. Exactly one of this and `snapshotTag`. */
+  template?: string;
+  /** Fork from this tag. */
+  snapshotTag?: string;
+  /** Your own id. It need not be random, and it does not replace a token. */
+  id?: string;
+  pool?: string;
+  nodeId?: string;
+  /** Only on nodes running `gvisor` or `firecracker`. For a template. */
+  backend?: string;
+  /** The port the gateway forwards to by default. */
+  port?: number;
+  /** A named volume to attach. */
+  volume?: string;
+  /** Memory ceiling, overriding the template's. */
+  memoryLimitMib?: number;
+}
+
+function createBody(options: CreateOptions): SpawnOptions {
+  const body: SpawnOptions = {};
+  if (options.template !== undefined) body.template = options.template;
+  if (options.snapshotTag !== undefined) body.snapshot_tag = options.snapshotTag;
+  if (options.id !== undefined) body.id = options.id;
+  if (options.pool !== undefined) body.pool = options.pool;
+  if (options.nodeId !== undefined) body.node_id = options.nodeId;
+  if (options.backend !== undefined) body.backend = options.backend;
+  if (options.port !== undefined) body.port = options.port;
+  if (options.volume !== undefined) body.volume = options.volume;
+  if (options.memoryLimitMib !== undefined) {
+    body.memory_limit_mib = options.memoryLimitMib;
+  }
+  return body;
+}
+
 /**
- * Client for the sandstorm-controller daemon's REST API.
+ * Client for a Sandstorm master's REST API.
  *
  * @example
  * ```ts
  * import { Controller } from '@deeplethe/sandstorm';
  * const ctrl = new Controller({
- *   baseUrl: 'http://127.0.0.1:8889',
+ *   baseUrl: 'https://127.0.0.1:8080',
  *   token: process.env.SANDSTORM_TOKEN,
+ *   caFile: process.env.SANDSTORM_CA,
  * });
- * const snapshots = await ctrl.listSnapshots();
- * const [sb] = await ctrl.spawnSandboxes({ snapshotTag: 'python-3-12-slim' });
+ * const templates = await ctrl.listTemplates();
+ * const sb = await ctrl.createSandbox({ template: 'python' });
+ * // The master answers before a node has started it: see Sandbox.create.
  * const result = await ctrl.execCommand(sb.id, ['python3', '-c', 'print(2+2)'], { sandboxToken: sb.token });
- * const branch = await ctrl.branchSandbox(sb.id, { diff: true });
+ * const branch = await ctrl.branchSandbox(sb.id, { tag: 'checkpoint-1' });
+ * const children = await ctrl.spawnSandboxes({ snapshotTag: branch.tag, n: 4 });
  * await ctrl.killSandbox(sb.id);
  * ```
  */
@@ -80,6 +146,7 @@ export class Controller {
   readonly baseUrl: string;
   readonly token: string | undefined;
   readonly timeoutMs: number;
+  readonly caFile: string | undefined;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: ControllerOptions = {}) {
@@ -87,18 +154,32 @@ export class Controller {
       typeof process !== "undefined" ? process.env.SANDSTORM_URL : undefined;
     const envToken =
       typeof process !== "undefined" ? process.env.SANDSTORM_TOKEN : undefined;
+    const envCa =
+      typeof process !== "undefined" ? process.env.SANDSTORM_CA : undefined;
     // A loop, not `.replace(/\/+$/, "")`. That regex backtracks on a long
     // run of slashes followed by anything else -- O(n^2), which CodeQL
     // flags as js/polynomial-redos. The input is the caller's own base URL
     // rather than anything an attacker supplies, so the risk here is small,
     // but this is a published library and the loop is both linear and
     // easier to read.
-    let base = opts.baseUrl ?? envUrl ?? "http://127.0.0.1:8889";
+    let base = opts.baseUrl ?? envUrl ?? DEFAULT_URL;
     while (base.endsWith("/")) base = base.slice(0, -1);
     this.baseUrl = base;
     this.token = opts.token ?? envToken ?? undefined;
     this.timeoutMs = opts.timeoutMs ?? 60_000;
-    this.fetchImpl = opts.fetch ?? globalThis.fetch;
+    // Refused rather than ignored: the caller asked for one CA, and a custom
+    // fetch would quietly verify against whatever it likes.
+    if (opts.fetch && opts.caFile) {
+      throw new Error(
+        "Controller: `caFile` cannot be combined with `fetch`, which does its own TLS.",
+      );
+    }
+    this.caFile = opts.caFile ?? (envCa || undefined);
+    this.fetchImpl =
+      opts.fetch ??
+      (this.caFile && base.startsWith("https://")
+        ? fetchWithCa(this.caFile)
+        : globalThis.fetch);
     if (typeof this.fetchImpl !== "function") {
       throw new Error(
         "Controller: no fetch implementation. Node 18+ ships fetch globally; otherwise pass `fetch` in options.",
@@ -106,10 +187,25 @@ export class Controller {
     }
   }
 
+  // --- templates ----------------------------------------------------
+
+  /** The names of the registered templates. */
+  async listTemplates(): Promise<string[]> {
+    return this.request<string[]>("GET", "/v1/templates");
+  }
+
   // --- snapshots ----------------------------------------------------
 
   async listSnapshots(): Promise<SnapshotInfo[]> {
     return this.request<SnapshotInfo[]>("GET", "/v1/snapshots");
+  }
+
+  /** One tag, plus how many sandboxes are still forked from it. */
+  async getSnapshot(tag: string): Promise<SnapshotDetail> {
+    return this.request<SnapshotDetail>(
+      "GET",
+      `/v1/snapshots/${encodeURIComponent(tag)}/info`,
+    );
   }
 
   async deleteSnapshot(tag: string): Promise<void> {
@@ -119,47 +215,29 @@ export class Controller {
   // --- sandboxes ----------------------------------------------------
 
   /**
-   * Fork N children from a registered snapshot.
+   * Make one sandbox from a template or a tag.
    *
-   * @param options.snapshotTag    snake_case in the wire format,
-   *                               camelCase here.
-   * @param options.prewarm        v0.2.5+. Relocates the cold-cache
-   *                               penalty from the first BRANCH to
-   *                               sandbox-creation time.
-   * @param options.liveFork       v0.4 to v0.5 only; v0.6 refuses it
-   *                               with 410 Gone. Boot with memfd-backed
-   *                               RAM so later BRANCHes from this
-   *                               sandbox can use `mode: "live"`.
-   *                               Requires kernel 5.7+ and the vendored
-   *                               Firecracker fork.
+   * Returns the only response that carries its `token`. The master answers
+   * before any node has started it, so `ip` is absent until one reports it
+   * running, and {@link Sandbox.create} waits for that.
    */
-  async spawnSandboxes(options: {
-    snapshotTag: string;
-    n?: number;
-    perChildNetns?: boolean;
-    memoryLimitMib?: number;
-    prewarm?: boolean;
-    liveFork?: boolean;
-    /** v0.4+: back the memfd with 2 MiB hugepages. Only meaningful with `liveFork: true`. */
-    hugepages?: boolean;
-  }): Promise<SandboxInfo[]> {
-    const body: SpawnOptions = {
-      snapshot_tag: options.snapshotTag,
-      n: options.n ?? 1,
-      per_child_netns: options.perChildNetns ?? false,
-    };
-    if (options.memoryLimitMib !== undefined) {
-      body.memory_limit_mib = options.memoryLimitMib;
-    }
-    if (options.prewarm !== undefined) {
-      body.prewarm = options.prewarm;
-    }
-    if (options.liveFork !== undefined) {
-      body.live_fork = options.liveFork;
-    }
-    if (options.hugepages !== undefined) {
-      body.hugepages = options.hugepages;
-    }
+  async createSandbox(options: CreateOptions): Promise<SandboxInfo> {
+    return this.request<SandboxInfo>("POST", "/v1/sandboxes", createBody(options));
+  }
+
+  /**
+   * Make N sandboxes from a template or a tag.
+   *
+   * @param options.n              At most 256. Default 1.
+   * @param options.perChildNetns  Accepted and ignored: every sandbox has
+   *                               its own network namespace.
+   */
+  async spawnSandboxes(
+    options: CreateOptions & { n?: number; perChildNetns?: boolean },
+  ): Promise<SandboxInfo[]> {
+    const body = createBody(options);
+    body.n = options.n ?? 1;
+    body.per_child_netns = options.perChildNetns ?? false;
     return this.request<SandboxInfo[]>("POST", "/v1/sandboxes", body);
   }
 
@@ -181,49 +259,50 @@ export class Controller {
     );
   }
 
+  /** Mark a sandbox used, which brings it back to hot. */
+  async touchSandbox(sandboxId: string): Promise<SandboxInfo> {
+    return this.request<SandboxInfo>(
+      "POST",
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}/touch`,
+    );
+  }
+
+  /** Ask for a tier now, rather than waiting for the idle policy. */
+  async setSandboxTier(sandboxId: string, tier: Tier): Promise<SandboxInfo> {
+    return this.request<SandboxInfo>(
+      "POST",
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}/tier`,
+      { tier },
+    );
+  }
+
+  /** Clear a sandbox's failure so its node tries again. */
+  async retrySandbox(sandboxId: string): Promise<SandboxInfo> {
+    return this.request<SandboxInfo>(
+      "POST",
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}/retry`,
+    );
+  }
+
   /**
-   * Branch a running sandbox into a new snapshot.
+   * Checkpoint a running sandbox into a new tag to fork from. The parent
+   * keeps running, after a short pause, and this returns once the node has
+   * written the image.
    *
-   * Pauses the source briefly, snapshots, resumes. Pause window
-   * depends on `options.mode`:
-   *
-   * - `"full"` (default): 0.5-8 s, whole guest RAM written.
-   * - `"diff"` (v0.3+): ~200 ms idle source, 6-15× speedup on typical
-   *   agent workloads, 143× ceiling on 4 GiB SSD.
-   * - `"live"` (v0.4+): sub-50 ms; memory streams from the running
-   *   parent via UFFD_WP. Requires source booted with
-   *   `liveFork: true`. Combine with `wait: false` to return after
-   *   the source resumes (~10 ms) without waiting on the background
-   *   copy.
-   *
-   * The legacy `options.diff` boolean still works for v0.3.x daemon
-   * compat but is mutually exclusive with `options.mode` server-side.
-   *
-   * Returns a {@link SnapshotInfo}; pass its `tag` back into
-   * {@link spawnSandboxes} to fan out grandchildren.
+   * The sandbox must be hot: the master answers 409 otherwise, and
+   * {@link touchSandbox} wakes it. Returns a {@link SnapshotInfo}; pass its
+   * `tag` to {@link spawnSandboxes} to fan out children.
    */
   async branchSandbox(
     sandboxId: string,
-    options: BranchOptions = {},
+    options: BranchOptions,
   ): Promise<SnapshotInfo> {
-    const body: BranchOptions = {};
-    if (options.tag !== undefined) body.tag = options.tag;
-    // Prefer canonical `mode` when set; fall back to legacy `diff`
-    // so older daemons keep working unchanged.
-    if (options.mode !== undefined) {
-      body.mode = options.mode;
-    } else if (options.diff) {
-      body.diff = true;
-    }
-    if (options.measure_diff) body.measure_diff = true;
-    // `wait: true` is the daemon default; only send when the caller
-    // opted into fire-and-forget so the body stays minimal against
-    // daemons that don't recognize the field.
-    if (options.wait === false) body.wait = false;
     return this.request<SnapshotInfo>(
       "POST",
       `/v1/sandboxes/${encodeURIComponent(sandboxId)}/branch`,
-      body,
+      { tag: options.tag },
+      undefined,
+      Math.max(this.timeoutMs, BRANCH_TIMEOUT_MS),
     );
   }
 
@@ -231,7 +310,7 @@ export class Controller {
    * Run a subprocess in the sandbox.
    *
    * `sandboxToken` is the `token` field of the response that created the
-   * sandbox. From v0.6 the daemon requires it on every call that reaches
+   * sandbox. From v0.6 the master requires it on every call that reaches
    * into a sandbox: the bearer token says you may talk to the API, this
    * says you may enter *this* sandbox. Omitting it gets a 403.
    */
@@ -240,33 +319,37 @@ export class Controller {
     args: string[],
     options: { timeoutSecs?: number; sandboxToken?: string } = {},
   ): Promise<ExecResult> {
-    const body: ExecOptions = {
-      args,
-      timeout_secs: options.timeoutSecs ?? 30,
-    };
+    const timeoutSecs = options.timeoutSecs ?? 30;
+    const body: ExecOptions = { args, timeout_secs: timeoutSecs };
     return this.request<ExecResult>(
       "POST",
       `/v1/sandboxes/${encodeURIComponent(sandboxId)}/exec`,
       body,
       options.sandboxToken,
+      this.commandTimeoutMs(timeoutSecs),
     );
   }
 
-  /** Eval against the warmed PID 1. See {@link execCommand} for `sandboxToken`. */
+  /**
+   * Run a snippet with the template's `eval_argv`, `python3 -c` by default.
+   * `result` is what it printed. See {@link execCommand} for `sandboxToken`.
+   */
   async evalCode(
     sandboxId: string,
     code: string,
     sandboxToken?: string,
+    timeoutSecs = 30,
   ): Promise<EvalResult> {
     return this.request<EvalResult>(
       "POST",
       `/v1/sandboxes/${encodeURIComponent(sandboxId)}/eval`,
-      { code },
+      { code, timeout_secs: timeoutSecs },
       sandboxToken,
+      this.commandTimeoutMs(timeoutSecs),
     );
   }
 
-  /** Round-trip to the guest agent. See {@link execCommand} for `sandboxToken`. */
+  /** Check the sandbox answers. See {@link execCommand} for `sandboxToken`. */
   async pingSandbox(
     sandboxId: string,
     sandboxToken?: string,
@@ -281,11 +364,21 @@ export class Controller {
 
   // --- internals ----------------------------------------------------
 
+  /**
+   * How long to wait for a command the sandbox may run for this long. The
+   * master gives the node `timeoutSecs` plus 20 s and then answers 504, so
+   * waiting a little longer gets its answer rather than our own.
+   */
+  private commandTimeoutMs(timeoutSecs: number): number {
+    return Math.max(this.timeoutMs, (timeoutSecs + 25) * 1000);
+  }
+
   private async request<T>(
     method: string,
     path: string,
     body?: unknown,
     sandboxToken?: string,
+    timeoutMs: number = this.timeoutMs,
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {};
@@ -295,7 +388,7 @@ export class Controller {
     // ends up in logs and in Referer.
     if (sandboxToken) headers[SANDBOX_TOKEN_HEADER] = sandboxToken;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const resp = await this.fetchImpl(url, {
         method,

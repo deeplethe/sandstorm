@@ -305,12 +305,16 @@ canvas.strip { display: block; width: 100%; height: 20px; border-radius: var(--r
 .gate h1 { margin: 0 0 6px; font-family: var(--serif); font-size: 24px; font-weight: 500; }
 .gate p { color: var(--ink-2); margin: 0 0 16px; font-size: 13.5px; }
 .gate input { width: 100%; font: inherit; padding: 10px 12px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--card-2); color: var(--ink); }
+.gate textarea { width: 100%; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; padding: 8px 12px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--card-2); color: var(--ink); resize: vertical; }
+.gate label.check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink); }
+.gate label.check input { width: auto; }
 .gate button { margin-top: 12px; width: 100%; padding: 10px; border-radius: var(--r-ctl); border: 0; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
 .gate .err { color: var(--bad); font-size: 12.5px; min-height: 18px; margin-top: 8px; }
 .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .btn { font: inherit; font-size: 13px; font-weight: 600; padding: 7px 12px; border-radius: var(--r-ctl); border: 1px solid var(--line);
   background: var(--card-2); color: var(--ink); cursor: pointer; white-space: nowrap; }
 .btn:hover { border-color: var(--accent); }
+.head .btns { display: flex; gap: 8px; }
 .gate form.wide { width: min(620px, 94vw); position: relative; }
 .gate .x { position: absolute; top: 14px; right: 16px; margin: 0; width: auto; padding: 2px 8px; background: none; color: var(--muted); font-size: 20px; }
 .tabs { display: flex; gap: 2px; padding: 3px; margin: 4px 0 14px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--card-2); }
@@ -364,6 +368,8 @@ table.tbl .err1 { display: inline-block; max-width: 380px; overflow: hidden; tex
 table.tbl td.ck, table.tbl th.ck { width: 28px; padding-right: 0; }
 table.tbl input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
 table.tbl tr.sel td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.linkish { font: inherit; padding: 0; border: 0; background: none; color: var(--ink); cursor: pointer; border-bottom: 1px dotted var(--muted); }
+.linkish:hover { color: var(--accent); border-color: var(--accent); }
 .kebab { font: inherit; font-size: 16px; line-height: 1; padding: 0 8px 4px; border-radius: var(--r-ctl); border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; }
 .kebab:hover, .kebab[aria-expanded="true"] { color: var(--ink); border-color: var(--line); background: var(--card-2); }
 .menu { position: fixed; z-index: 90; min-width: 150px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 4px; box-shadow: 0 12px 30px rgba(0,0,0,.35); }

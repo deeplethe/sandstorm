@@ -93,7 +93,7 @@ jobs:
       # setup-uv stopped publishing floating major tags after v7, so this
       # one is pinned to an exact release while the rest track majors.
       - uses: astral-sh/setup-uv@v9.0.0
-      - name: stdio handshake
+      - name: stdio handshake and unit tests
         env:
           MCP: ${{ matrix.mcp }}
         run: |
@@ -109,4 +109,4 @@ jobs:
             --with anyio \
             --with pytest \
             --with "$MCP" "${pins[@]}" \
-            pytest -q sdk/mcp/tests/test_stdio.py
+            pytest -q sdk/mcp/tests

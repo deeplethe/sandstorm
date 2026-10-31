@@ -89,6 +89,48 @@ fn default_eval_argv() -> Vec<String> {
         .collect()
 }
 
+/// The resolvers a sandbox gets when its template names none it can use.
+/// Public ones, so a sandbox allowed the internet can use them without being
+/// allowed anything else. The same as `sandstorm-init.sh`.
+///
+/// `single-request-reopen`: a program's A and AAAA lookups leave together from
+/// one port, and NAT can lose one of the two, which glibc waits out. Measured
+/// from a Firecracker guest: 5.2 s, the same lookup otherwise 0.2 s.
+const RESOLVERS: &str =
+    "options single-request-reopen timeout:2\nnameserver 1.1.1.1\nnameserver 8.8.8.8\n";
+
+/// Whether this rootfs names a resolver a sandbox can reach. An image often
+/// does not: a Docker export leaves `resolv.conf` empty or a link to the
+/// systemd-resolved stub, whose 127.0.0.53 is nothing inside a sandbox.
+fn has_a_resolver(rootfs: &Path) -> bool {
+    let conf = rootfs.join("etc/resolv.conf");
+    if !conf.symlink_metadata().is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    std::fs::read_to_string(conf).is_ok_and(|text| {
+        text.lines().any(|l| {
+            let mut words = l.split_whitespace();
+            words.next() == Some("nameserver")
+                && words
+                    .next()
+                    .and_then(|ip| ip.parse::<std::net::IpAddr>().ok())
+                    .is_some_and(|ip| !ip.is_loopback())
+        })
+    })
+}
+
+/// Into the sandbox's own layer, before the overlay is mounted. Left alone
+/// if the layer has one, which is the sandbox's business.
+fn give_a_resolver(template_rootfs: &Path, upper: &Path) -> Result<()> {
+    let conf = upper.join("etc/resolv.conf");
+    if conf.symlink_metadata().is_ok() || has_a_resolver(template_rootfs) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(upper.join("etc"))?;
+    std::fs::write(conf, RESOLVERS)?;
+    Ok(())
+}
+
 /// Code directories only. `/etc` is deliberately absent.
 ///
 /// It used to be here, so a template could be a bare skeleton and still
@@ -222,6 +264,7 @@ pub fn build(cfg: &RuntimeConfig, req: &BuildRequest<'_>) -> Result<Layout> {
             unpack_into(arc, &l.upper)
                 .with_context(|| format!("restoring {id} from {}", arc.display()))?;
         }
+        give_a_resolver(template_rootfs, &l.upper).context("writing resolv.conf")?;
         mount_overlay(template_rootfs, &l.upper, &l.work, &l.merged)?;
     } else if restore_from.is_some() {
         // The layer is already live, so the archive cannot be laid down
@@ -627,6 +670,76 @@ mod tests {
         let bad = Path::new("/var/lib/sandstorm/a,b");
         let e = mount_overlay(bad, bad, bad, bad).unwrap_err().to_string();
         assert!(e.contains("cannot carry"), "got: {e}");
+    }
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+
+    fn conf(lower: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let td = tempfile::TempDir::new().unwrap();
+        for (path, text) in lower {
+            let p = td.path().join("lower").join(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+        std::fs::create_dir_all(td.path().join("lower")).unwrap();
+        let upper = td.path().join("upper");
+        std::fs::create_dir_all(&upper).unwrap();
+        (td, upper)
+    }
+
+    fn resolved(lower: &[(&str, &str)]) -> Option<String> {
+        let (td, upper) = conf(lower);
+        give_a_resolver(&td.path().join("lower"), &upper).unwrap();
+        std::fs::read_to_string(upper.join("etc/resolv.conf")).ok()
+    }
+
+    #[test]
+    fn an_image_with_no_usable_resolver_gets_one() {
+        assert_eq!(resolved(&[]).as_deref(), Some(RESOLVERS));
+        let empty = [("etc/resolv.conf", "")];
+        assert_eq!(resolved(&empty).as_deref(), Some(RESOLVERS));
+        let stub = [("etc/resolv.conf", "nameserver 127.0.0.53\noptions edns0\n")];
+        assert_eq!(resolved(&stub).as_deref(), Some(RESOLVERS));
+    }
+
+    #[test]
+    fn a_template_that_names_one_keeps_it() {
+        assert_eq!(
+            resolved(&[("etc/resolv.conf", "nameserver 9.9.9.9\n")]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_link_out_of_the_rootfs_is_not_followed() {
+        let (td, upper) = conf(&[]);
+        let etc = td.path().join("lower/etc");
+        std::fs::create_dir_all(&etc).unwrap();
+        std::os::unix::fs::symlink(
+            "/run/systemd/resolve/stub-resolv.conf",
+            etc.join("resolv.conf"),
+        )
+        .unwrap();
+        give_a_resolver(&td.path().join("lower"), &upper).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(upper.join("etc/resolv.conf")).unwrap(),
+            RESOLVERS
+        );
+    }
+
+    #[test]
+    fn what_the_sandbox_wrote_stays() {
+        let (td, upper) = conf(&[]);
+        std::fs::create_dir_all(upper.join("etc")).unwrap();
+        std::fs::write(upper.join("etc/resolv.conf"), "mine").unwrap();
+        give_a_resolver(&td.path().join("lower"), &upper).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(upper.join("etc/resolv.conf")).unwrap(),
+            "mine"
+        );
     }
 }
 
