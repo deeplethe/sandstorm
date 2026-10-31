@@ -662,14 +662,18 @@ mod tests {
         let running = Arc::new(AtomicUsize::new(0));
         let overlapped = Arc::new(AtomicUsize::new(0));
         let (r, o) = (running.clone(), overlapped.clone());
-        let w = Arc::new(Wakeups::new(move |_, _, _| {
-            if r.fetch_add(1, Ordering::SeqCst) > 0 {
-                o.fetch_add(1, Ordering::SeqCst);
-            }
-            std::thread::sleep(Duration::from_millis(20));
-            r.fetch_sub(1, Ordering::SeqCst);
-            Ok(())
-        }));
+        let w = Arc::new(
+            Wakeups::new(move |_, _, _| {
+                if r.fetch_add(1, Ordering::SeqCst) > 0 {
+                    o.fetch_add(1, Ordering::SeqCst);
+                }
+                std::thread::sleep(Duration::from_millis(20));
+                r.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            })
+            // Room for all eight below: the default depends on the host's CPUs.
+            .with_limits(WAKE_BUDGET, Some(8)),
+        );
 
         // Held by "the master's command" on another thread for 100 ms.
         let lock = w.lock("sb");
