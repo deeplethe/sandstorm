@@ -1,0 +1,44 @@
+name: codeql-rust
+
+# Apart from codeql.yml because Rust takes five minutes where the others take
+# under one, and about two PRs in five do not touch it. Every push to a branch
+# below and the weekly run still scan it all. A PR that skips this is not held
+# up: only `rust` in ci.yml is a required check.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/codeql-rust.yml'
+  schedule:
+    - cron: '17 3 * * 1'
+
+# A new push to a PR makes the scan of the last one worthless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (rust)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          # The category default setup used, so alerts carry over.
+          category: /language:rust

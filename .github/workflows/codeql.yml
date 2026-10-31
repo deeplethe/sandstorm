@@ -1,0 +1,43 @@
+name: codeql
+
+# Rust is in codeql-rust.yml, which says why.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  schedule:
+    - cron: '17 3 * * 1'
+
+# A new push to a PR makes the scan of the last one worthless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, python]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          # The category default setup used, so alerts carry over.
+          category: /language:${{ matrix.language }}
