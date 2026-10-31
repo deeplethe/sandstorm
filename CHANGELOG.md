@@ -6,6 +6,10 @@ Versioning](https://semver.org/spec/v2.0.0.html) once it reaches
 
 ## Unreleased
 
+### A Firecracker guest's agent listens on the guest's address
+
+It listened on every interface. It now binds the address the kernel was booted with. Code inside the sandbox can still reach it there, so this narrows what is exposed and is not a boundary.
+
 ### A template can come from a container image
 
 `POST /v1/templates/from-image`, or "+ From an image" in the console, has every

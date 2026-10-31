@@ -767,29 +767,53 @@ def handle(conn: socket.socket, addr) -> None:
             pass
 
 
+def bind_address(cmdline: str = "/proc/cmdline") -> str:
+    """The guest's own address, from the kernel's `ip=` argument.
+
+    The host reaches the agent there, so nothing needs every interface. With
+    no network there is no one to answer, and loopback is enough.
+    """
+    try:
+        with open(cmdline) as f:
+            words = f.read().split()
+    except OSError:
+        return "127.0.0.1"
+    for word in words:
+        if word.startswith("ip="):
+            addr = word[len("ip="):].split(":")[0]
+            try:
+                socket.inet_aton(addr)
+            except OSError:
+                continue
+            if addr.count(".") == 3:
+                return addr
+    return "127.0.0.1"
+
+
 def serve() -> None:
+    addr = bind_address()
     # Retry bind — eth0 might not be fully up at startup.
     last_err = None
     for _ in range(30):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("0.0.0.0", 8888))
+            s.bind((addr, 8888))
             s.listen(128)
             break
         except OSError as e:
             last_err = e
             time.sleep(0.2)
     else:
-        print(f"sandstorm: failed to bind 0.0.0.0:8888 after retries: {last_err}", flush=True)
+        print(f"sandstorm: failed to bind {addr}:8888 after retries: {last_err}", flush=True)
         sys.exit(1)
 
-    print("sandstorm: agent listening on 0.0.0.0:8888", flush=True)
+    print(f"sandstorm: agent listening on {addr}:8888", flush=True)
 
     while True:
         try:
-            conn, addr = s.accept()
-            threading.Thread(target=handle, args=(conn, addr), daemon=True).start()
+            conn, peer = s.accept()
+            threading.Thread(target=handle, args=(conn, peer), daemon=True).start()
         except Exception as e:
             print(f"sandstorm: accept error: {e}", flush=True)
             time.sleep(0.1)
