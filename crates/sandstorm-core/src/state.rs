@@ -98,6 +98,8 @@ pub struct E2bSandbox {
     /// The token envd was given at `/init`, which it then demands in
     /// `X-Access-Token` on every request.
     pub access_token: String,
+    /// Required on public sandbox traffic when the caller disabled public access.
+    pub traffic_access_token: Option<String>,
     /// What envd reported at `/init`. The SDKs switch features on it.
     pub envd_version: String,
     /// JSON objects, kept as the caller sent them.
@@ -109,7 +111,7 @@ pub struct E2bSandbox {
 }
 
 const E2B_COLS: &str = "id, client_id, template_id, access_token, envd_version, \
-                        env_vars, metadata, auto_pause, end_at";
+                        env_vars, metadata, auto_pause, end_at, traffic_access_token";
 
 fn egress_json(e: &Egress) -> Option<String> {
     (*e != Egress::default()).then(|| serde_json::to_string(e).expect("plain strings and a bool"))
@@ -126,6 +128,7 @@ fn e2b_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<E2bSandbox> {
         metadata: r.get(6)?,
         auto_pause: r.get(7)?,
         end_at: r.get(8)?,
+        traffic_access_token: r.get(9)?,
     })
 }
 
@@ -342,7 +345,8 @@ impl Store {
                 env_vars      TEXT NOT NULL DEFAULT '{}',
                 metadata      TEXT NOT NULL DEFAULT '{}',
                 auto_pause    INTEGER NOT NULL DEFAULT 0,
-                end_at        INTEGER NOT NULL
+                end_at        INTEGER NOT NULL,
+                traffic_access_token TEXT
             );
             "#,
         )?;
@@ -396,6 +400,7 @@ impl Store {
             // Only for showing an operator why two nodes are in different
             // pools; placement keys on `fingerprint` alone.
             "ALTER TABLE nodes ADD COLUMN host TEXT",
+            "ALTER TABLE e2b_sandboxes ADD COLUMN traffic_access_token TEXT",
         ] {
             match self.conn.execute(ddl, []) {
                 Ok(_) => {}
@@ -1057,8 +1062,8 @@ impl Store {
     pub fn insert_e2b(&self, e: &E2bSandbox) -> Result<()> {
         self.conn.execute(
             "INSERT INTO e2b_sandboxes (id, client_id, template_id, access_token,
-                 envd_version, env_vars, metadata, auto_pause, end_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 envd_version, env_vars, metadata, auto_pause, end_at, traffic_access_token)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 e.id,
                 e.client_id,
@@ -1069,6 +1074,7 @@ impl Store {
                 e.metadata,
                 e.auto_pause,
                 e.end_at,
+                e.traffic_access_token,
             ],
         )?;
         Ok(())

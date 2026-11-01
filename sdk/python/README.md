@@ -1,6 +1,9 @@
 # sandstorm — Python SDK
 
-E2B-compatible sandbox API for a [Sandstorm](https://github.com/deeplethe/sandstorm) master.
+Python client for a [Sandstorm](https://github.com/deeplethe/sandstorm) master.
+Its `Sandbox` class supports a small E2B-style command API, but uses
+Sandstorm's native HTTP API. To use the official `e2b` SDK, see the
+[E2B recipe](../../recipes/e2b-codeinterpreter/README.md).
 
 The SDK talks to the master over HTTP, so all it needs is the master's address
 and credentials. It has no dependencies, and nothing else has to be installed
@@ -109,6 +112,9 @@ has gone idle is a 409 until it is brought back with `POST
 /v1/sandboxes/:id/touch`.
 
 A command that exits non-zero is not an error: read `exit_code` on the result.
+
+Outbound network access follows the master's egress policy. It is off by
+default; configure it in the console or through `POST /v1/egress`.
 
 ## Status
 

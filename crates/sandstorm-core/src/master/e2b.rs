@@ -80,6 +80,7 @@ pub(super) struct Route {
     pub(super) gateway: SocketAddr,
     /// The sandbox's own token, which the gateway demands.
     pub(super) token: String,
+    pub(super) traffic_access_token: Option<String>,
 }
 
 impl E2b {
@@ -110,18 +111,24 @@ impl E2b {
             let store = self.st.store();
             match store.get_e2b(id).map_err(E2bErr::internal)? {
                 None => None,
-                Some((_, sb)) => sb
-                    .gateway_port
-                    .and_then(|p| Some((self.st.node_ip(&store, &sb.node_id)?, p, sb.token))),
+                Some((rec, sb)) => sb.gateway_port.and_then(|p| {
+                    Some((
+                        self.st.node_ip(&store, &sb.node_id)?,
+                        p,
+                        sb.token,
+                        rec.traffic_access_token,
+                    ))
+                }),
             }
         };
-        let Some((ip, port, token)) = found else {
+        let Some((ip, port, token, traffic_access_token)) = found else {
             self.forget(id);
             return Ok(None);
         };
         let r = Route {
             gateway: SocketAddr::new(ip, port),
             token,
+            traffic_access_token,
         };
         self.routes
             .lock()
@@ -323,6 +330,7 @@ fn view(e: &E2b, rec: &E2bSandbox, sb: &Sandbox, full: bool) -> Value {
     if full {
         v["domain"] = json!(e.domain);
         v["envdAccessToken"] = json!(rec.access_token);
+        v["trafficAccessToken"] = json!(rec.traffic_access_token);
     }
     v
 }
@@ -338,9 +346,7 @@ fn handle(e: &E2b, rec: &E2bSandbox) -> Value {
         "envdVersion": rec.envd_version,
         "envdAccessToken": rec.access_token,
         "domain": e.domain,
-        // Public traffic is not gated in this version; see the RFC's E2B
-        // section, P1.
-        "trafficAccessToken": Value::Null,
+        "trafficAccessToken": rec.traffic_access_token,
     })
 }
 
@@ -524,14 +530,10 @@ struct NewE2bSandbox {
     env_vars: Option<HashMap<String, String>>,
     #[serde(default)]
     auto_pause: Option<bool>,
-    // Accepted, and not acted on in this version: envd always gets an
-    // access token (as if `secure` were true). It is P1 in the RFC's E2B
-    // section; it is named here so nobody mistakes its absence for an
-    // oversight.
-    #[allow(dead_code)]
+    // envd always requires an access token.
     #[serde(default)]
     secure: Option<bool>,
-    #[serde(default, rename = "allow_internet_access")]
+    #[serde(default, alias = "allow_internet_access")]
     allow_internet_access: Option<bool>,
     #[serde(default)]
     network: Option<E2bNetwork>,
@@ -540,6 +542,8 @@ struct NewE2bSandbox {
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct E2bNetwork {
+    #[serde(default)]
+    allow_public_traffic: Option<bool>,
     #[serde(default)]
     allow_out: Vec<String>,
     #[serde(default)]
@@ -603,6 +607,16 @@ async fn create(
     State(e): State<Arc<E2b>>,
     Json(req): Json<NewE2bSandbox>,
 ) -> Result<(StatusCode, Json<Value>), E2bErr> {
+    if req.secure == Some(false) {
+        return Err(E2bErr::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "secure=false is not supported; Sandstorm always requires an envd access token",
+        ));
+    }
+    let private_traffic = req
+        .network
+        .as_ref()
+        .is_some_and(|network| network.allow_public_traffic == Some(false));
     let template = req.template_id.clone();
     let known =
         e.st.store()
@@ -628,6 +642,7 @@ async fn create(
         // envd no token at all, which left every sandbox's envd open to
         // anyone who could reach it.
         access_token: random_token(),
+        traffic_access_token: private_traffic.then(random_token),
         envd_version: String::new(),
         env_vars: serde_json::to_string(&req.env_vars.unwrap_or_default())
             .map_err(E2bErr::internal)?,

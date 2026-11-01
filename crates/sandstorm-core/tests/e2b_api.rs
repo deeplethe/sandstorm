@@ -27,7 +27,7 @@ use tempfile::TempDir;
 /// Where envd listens, which the E2B surface hard-codes. The stand-in has
 /// to be on it, since the front door asks the gateway for this port.
 const ENVD: u16 = 49983;
-/// The one gateway port the master may hand out, so the test knows it.
+/// Gateway ports for the public and private sandboxes in the test.
 const GATEWAY: u16 = 28471;
 const DOMAIN: &str = "e2b.test";
 
@@ -114,7 +114,7 @@ async fn start() -> Harness {
         Store::open(td.path().join("state.db")).unwrap(),
         Ca::open_or_create(td.path().join("pki")).unwrap(),
         MasterOptions {
-            port_range: (GATEWAY, GATEWAY),
+            port_range: (GATEWAY, GATEWAY + 1),
             api_token: Some(token.clone()),
             admit: sandstorm_core::master::Admission {
                 min_free_mib: 0,
@@ -331,6 +331,104 @@ async fn the_e2b_surface_end_to_end() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
+
+    // A private sandbox requires the E2B traffic token on every front-door
+    // form. The public sandbox above remains reachable without one.
+    let private: Value = h
+        .api(reqwest::Method::POST, "/v2/sandboxes")
+        .json(&json!({"templateID": "base", "autoPause": true, "network": {"allowPublicTraffic": false}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let private_id = private["sandboxID"].as_str().unwrap();
+    let traffic_token = private["trafficAccessToken"].as_str().unwrap();
+    assert!(!traffic_token.is_empty());
+    let private_host = format!("{ENVD}-{private_id}.{DOMAIN}");
+    for request in [
+        h.req(reqwest::Method::GET, &private_host, "/echo"),
+        h.req(
+            reqwest::Method::GET,
+            "127.0.0.1",
+            &format!("/sandbox/{private_id}/{ENVD}/echo"),
+        ),
+        h.req(reqwest::Method::GET, "localhost", "/echo")
+            .header("e2b-sandbox-id", private_id)
+            .header("e2b-sandbox-port", ENVD.to_string()),
+    ] {
+        assert_eq!(
+            request.try_clone().unwrap().send().await.unwrap().status(),
+            401
+        );
+        assert_eq!(
+            request
+                .try_clone()
+                .unwrap()
+                .header("e2b-traffic-access-token", "wrong")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401
+        );
+        let seen: Value = request
+            .header("e2b-traffic-access-token", traffic_token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            seen.get("e2b-traffic-access-token").is_none(),
+            "front door must not forward the traffic secret to the sandbox: {seen}"
+        );
+    }
+    // The route above is cached. A newly expired deadline still blocks
+    // traffic until the E2B connect call extends it.
+    h.st.store()
+        .set_e2b_end_at(private_id, sandstorm_core::state::now_secs() - 1)
+        .unwrap();
+    assert_eq!(
+        h.req(reqwest::Method::GET, &private_host, "/echo")
+            .header("e2b-traffic-access-token", traffic_token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        502
+    );
+    assert_eq!(
+        h.api(
+            reqwest::Method::POST,
+            &format!("/sandboxes/{private_id}/connect")
+        )
+        .json(&json!({"timeout": 60}))
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        200
+    );
+    assert_eq!(
+        h.req(reqwest::Method::GET, &private_host, "/echo")
+            .header("e2b-traffic-access-token", traffic_token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        h.api(reqwest::Method::DELETE, &format!("/sandboxes/{private_id}"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
 
     // A stream arrives as one: the first chunk is in hand before envd has
     // written the second.

@@ -2483,6 +2483,13 @@ pub(super) fn apply_traffic(st: &St, req: &PollRequest) -> Result<(), ApiErr> {
             .get(id)
             .is_some_and(|at| at.elapsed() < EXPLICIT_TIER_HOLD);
         if serving && sb.tier != Tier::Hot && !asked_for {
+            let expired_e2b_pause = store
+                .get_e2b(id)
+                .map_err(ise)?
+                .is_some_and(|(rec, _)| rec.auto_pause && rec.end_at <= now_secs());
+            if expired_e2b_pause {
+                continue;
+            }
             tracing::info!(sandbox = %id, node = %req.node_id, was = %sb.tier, "woken by traffic at its gateway");
             store.set_tier(id, Tier::Hot).map_err(ise)?;
             st.metrics.woke(sb.tier);

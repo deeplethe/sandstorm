@@ -67,6 +67,12 @@ Without wildcard DNS a sandbox is also reachable as
 `E2b-Sandbox-Id` and `E2b-Sandbox-Port`, but the SDKs build Host-based
 addresses themselves, so the SDKs need the DNS.
 
+To require a token for traffic forwarded to a sandbox, create it with
+`network.allowPublicTraffic=false`. The response includes a
+`trafficAccessToken`; send it as `e2b-traffic-access-token` on requests to
+the sandbox's exposed ports. This applies to the wildcard host, path, and
+header routing forms. By default, exposed ports remain public.
+
 ## What differs from E2B
 
 - **`sudo` inside a sandbox does not work.** The bundle sets
@@ -76,9 +82,12 @@ addresses themselves, so the SDKs need the DNS.
   need root should ask for `user="root"`.
 - **The internet is off by default,** which E2B's is not. Turn it on in the
   console, or with `POST /v1/egress`; see [Egress](../../docs/API.md#egress).
-- **Not yet acted on:** the timeout deadline (a sandbox outlives its
-  `timeout`; Sandstorm's own idle tiers still apply), `secure=false`,
-  `trafficAccessToken`, metrics and logs.
+- **`secure=false` is unsupported:** it returns HTTP 501 because Sandstorm
+  always gives envd an access token.
+- **Timeouts:** the master checks expiry every five seconds. An expired
+  sandbox is paused when `autoPause=true`, otherwise it is deleted; expiry
+  is not exact to the second. Sandstorm's own idle tiers still apply.
+- **Not yet acted on:** metrics and logs.
 - **Template builds** (`e2b template build`) are not supported. A template
   needs envd in it, so build with this recipe and push the image for
   [`from-image`](../../docs/API.md#post-v1templatesfrom-image), or register with `POST /v1/templates`.
