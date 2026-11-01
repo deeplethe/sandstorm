@@ -1,10 +1,20 @@
 # Changelog
 
-Notable changes per release. forkd follows [Semantic
+Notable changes per release. Sandstorm follows [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html) once it reaches
 1.0; until then, the minor version can break compatibility.
 
-## Unreleased
+## v0.6.0 - 2026-11-01
+
+The first release as Sandstorm, and a different program from v0.5: one binary
+that runs a master and a fleet of nodes, gVisor by default so a node needs no
+KVM, Firecracker as a second backend chosen node by node, and sandboxes that
+move between four tiers on their own.
+
+**There is no upgrade in place from v0.5.** Everything is renamed with no
+compatibility layer, and the v0.5 runtime is gone, so install v0.6 fresh and make
+templates and snapshots again. The SDKs are now `sandstorm-sdk`, `sandstorm-mcp`
+and `@deeplethe/sandstorm`, and replace `forkd` and `@deeplethe/forkd`.
 
 ### A Firecracker guest's agent listens on the guest's address
 

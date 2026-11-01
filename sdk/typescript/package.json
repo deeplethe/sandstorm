@@ -1,6 +1,6 @@
 {
   "name": "@deeplethe/sandstorm",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "TypeScript client for Sandstorm: gVisor and Firecracker sandboxes across a fleet of nodes",
   "license": "Apache-2.0",
   "author": "Deeplethe <info@deeplethe.com>",

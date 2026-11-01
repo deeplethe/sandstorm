@@ -38,7 +38,10 @@ permissions:
 jobs:
   binaries:
     name: build binaries (x86_64-linux)
-    runs-on: ubuntu-latest
+    # A binary needs the glibc it was linked against, and a node runs the
+    # master's binary. Built on ubuntu-latest it needs 2.38, which leaves out
+    # Ubuntu 22.04 and Debian 12.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
 
@@ -59,7 +62,7 @@ jobs:
         run: npm ci && npm run build
 
       - name: cargo build --release --workspace
-        run: cargo build --release --workspace
+        run: cargo build --release --workspace --locked
 
       # sandstormd is the one binary: master, node and console. The v0.5 CLI
       # (`sandstorm`) left the tree in #362, so it is no longer staged.

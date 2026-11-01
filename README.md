@@ -125,7 +125,7 @@ A client on another machine connects by a name the master's certificate has to l
 
 ## Status
 
-v0.6 is not released yet, and it changes a lot: gVisor becomes the default backend, so a node needs no KVM, Firecracker stays as a second backend chosen node by node, and one host becomes a fleet. The last release, v0.5.3, is the Firecracker fork runtime; its README is [at that tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3). The design decisions are recorded in [docs/adr](docs/adr/README.md).
+v0.6 is the current release, and it changes a lot: gVisor becomes the default backend, so a node needs no KVM, Firecracker stays as a second backend chosen node by node, and one host becomes a fleet. The release before it, v0.5.3, is the Firecracker fork runtime; its README is [at that tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3). The design decisions are recorded in [docs/adr](docs/adr/README.md).
 
 Next, from what the fleet runs found:
 

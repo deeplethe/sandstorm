@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sandstorm-sdk"
-version = "0.5.3"
+version = "0.6.0"
 description = "Python client for Sandstorm: gVisor and Firecracker sandboxes across a fleet of nodes (E2B-compatible surface)"
 readme = "README.md"
 authors = [{name = "Deeplethe", email = "info@deeplethe.com"}]
