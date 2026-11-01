@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sandstorm-mcp"
-version = "0.2.1"
+version = "0.3.0"
 description = "Model Context Protocol server for Sandstorm: gVisor and Firecracker sandboxes across a fleet of nodes"
 readme = "README.md"
 authors = [{name = "Deeplethe", email = "info@deeplethe.com"}]

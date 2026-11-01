@@ -1,0 +1,54 @@
+name: ci-release
+
+# What release.yml builds, tried on a pull request. Those steps otherwise run
+# only on a tag, so a Dockerfile that no longer builds or a binary that needs a
+# newer glibc is found with the release half published.
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - 'rootfs-init/**'
+      - 'packaging/install.sh'
+      - 'web/console/**'
+      - '.github/workflows/ci-release.yml'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    name: build the Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          cache-from: type=gha
+
+  glibc:
+    name: keep the binary's glibc floor
+    # The runner release.yml builds on.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p sandstorm-core
+      # A weak version is one the binary runs without; only the others bind.
+      - name: Needs no glibc past 2.35
+        run: |
+          floor=$(readelf -V target/release/sandstormd \
+            | awk '/Name: GLIBC_/ && /Flags: none/ {print $3}' | sort -V | tail -1)
+          echo "needs $floor"
+          [ "$(printf '%s\nGLIBC_2.35\n' "$floor" | sort -V | tail -1)" = GLIBC_2.35 ]

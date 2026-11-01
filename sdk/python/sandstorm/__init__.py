@@ -21,7 +21,7 @@ from .controller import (
 )
 from .sandbox import CommandResult, Sandbox
 
-__version__ = "0.5.3"
+__version__ = "0.6.0"
 __all__ = [
     "Sandbox",
     "CommandResult",

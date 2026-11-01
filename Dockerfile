@@ -26,11 +26,13 @@ RUN npm run build
 # ---- builder ----
 FROM rust:1.83-slim-bookworm AS builder
 WORKDIR /build
-COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+# Compiled in: what an image template runs as its init and agent.
+COPY rootfs-init ./rootfs-init
 COPY --from=console /build/web/console/dist ./web/console/dist
 COPY packaging/install.sh ./packaging/install.sh
-RUN cargo build --release --bin sandstormd
+RUN cargo build --release --locked --bin sandstormd
 
 # ---- runtime ----
 FROM debian:bookworm-slim AS runtime

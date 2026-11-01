@@ -125,7 +125,7 @@ scripts/fleet.sh verify   # 启动一个沙箱，确认真的能跑
 
 ## 状态
 
-v0.6 还没有发布，改动很大：gVisor 成为默认后端，节点不再需要 KVM；Firecracker 保留为第二后端，按节点选择；从单机变成集群。最近一次发布是 v0.5.3，那是基于 Firecracker 的 fork 运行时，它的 README 见[那个 tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3)。架构决策记录在 [docs/adr](docs/adr/README.md)（英文）。
+v0.6 是当前版本，改动很大：gVisor 成为默认后端，节点不再需要 KVM；Firecracker 保留为第二后端，按节点选择；从单机变成集群。上一个版本 v0.5.3 是基于 Firecracker 的 fork 运行时，它的 README 见[那个 tag](https://github.com/deeplethe/sandstorm/tree/v0.5.3)。架构决策记录在 [docs/adr](docs/adr/README.md)（英文）。
 
 接下来，来自集群实测发现的问题：
 

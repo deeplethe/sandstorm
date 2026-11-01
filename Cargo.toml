@@ -5,7 +5,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.3"
+version = "0.6.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/deeplethe/sandstorm"
