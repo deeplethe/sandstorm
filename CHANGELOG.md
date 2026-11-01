@@ -74,6 +74,10 @@ A node used to start the sandboxes of a batch one after another, so 20 children 
 
 The master asks for a destroy until a report no longer lists the sandbox, so a repeat can arrive after the first is done. A veth built for that sandbox under its own name had gone back to the pool by then, and the repeat took it down or deleted it. The sandbox holding it could not be reached again. A sandbox whose network does not arrive after it started is now removed and started again, rather than left running where nothing can reach it.
 
+### A Firecracker call survives an interrupted read
+
+A call to Firecracker's API treated an interrupted read as a failure, so a load or a pause could fail with `no answer` while Firecracker was still working. The read now carries on.
+
 ### A Firecracker sandbox woken from disk keeps the right time
 
 A sandbox its node had put to disk to make room still had the rule that refuses connections to a cold sandbox when it came back, and the restore set the guest's clock through that rule. So the wake waited out 2 s, and the clock was not set. The guest is let through as soon as it is running.

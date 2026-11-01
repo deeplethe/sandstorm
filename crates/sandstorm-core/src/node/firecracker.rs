@@ -1299,6 +1299,18 @@ fn sync_clock(ip: Ipv4Addr) {
     tracing::warn!(%ip, "a restored guest's agent did not answer; its clock is stale");
 }
 
+/// `read`, carrying on through a signal. The kernel never restarts a read on
+/// a socket with a timeout set, even for a handler with `SA_RESTART`, so a
+/// signal landing on this thread would otherwise read as a failed call.
+fn read_past_signals(s: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    loop {
+        match s.read(buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            out => return out,
+        }
+    }
+}
+
 /// One call to Firecracker's API over its Unix socket. Returns the body;
 /// any status outside 2xx is an error carrying Firecracker's own message.
 fn api(sock: &Path, method: &str, path: &str, body: &Value, timeout: Duration) -> Result<String> {
@@ -1318,8 +1330,7 @@ fn api(sock: &Path, method: &str, path: &str, body: &Value, timeout: Duration) -
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
     let (head_end, want) = loop {
-        let n = s
-            .read(&mut chunk)
+        let n = read_past_signals(&mut s, &mut chunk)
             .with_context(|| format!("{method} {path}: no answer"))?;
         if n == 0 {
             bail!("{method} {path}: the connection closed before an answer");
@@ -1339,7 +1350,7 @@ fn api(sock: &Path, method: &str, path: &str, body: &Value, timeout: Duration) -
         }
     };
     while buf.len() < head_end + want {
-        let n = s.read(&mut chunk)?;
+        let n = read_past_signals(&mut s, &mut chunk)?;
         if n == 0 {
             break;
         }
@@ -1446,6 +1457,40 @@ mod tests {
             }
         });
         (sock, seen)
+    }
+
+    /// A signal landing on the thread waiting for the answer is not the
+    /// answer: this failed a load that Firecracker had not refused.
+    #[test]
+    fn a_signal_does_not_end_a_call() {
+        use std::os::unix::thread::JoinHandleExt;
+
+        extern "C" fn nothing(_: libc::c_int) {}
+        let dir = TempDir::new().unwrap();
+        let sock = dir.path().join("fc.sock");
+        let l = UnixListener::bind(&sock).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            c.read_exact(&mut [0u8; 1]).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            c.write_all(b"HTTP/1.1 204 X\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        });
+
+        // SAFETY: `nothing` does nothing, so it is safe in a signal handler.
+        unsafe {
+            libc::signal(libc::SIGUSR2, nothing as *const () as libc::sighandler_t);
+        }
+        let client =
+            std::thread::spawn(move || api(&sock, "PATCH", "/vm", &json!({}), API_TIMEOUT).err());
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(10));
+            // SAFETY: the thread is joined only below, so its id is live.
+            unsafe { libc::pthread_kill(client.as_pthread_t(), libc::SIGUSR2) };
+        }
+        let failed = client.join().unwrap();
+        assert!(failed.is_none(), "{failed:?}");
+        server.join().unwrap();
     }
 
     #[test]
