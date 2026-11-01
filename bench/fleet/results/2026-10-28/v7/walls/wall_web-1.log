@@ -1,0 +1,33 @@
+master   https://10.2.0.11:80
+nodes    6 connected of 6
+  pool default
+    f10              free=1454 MiB psi=0.0 cap=none
+    f3               free=1114 MiB psi=0.0 cap=none
+    f5               free=1162 MiB psi=0.0 cap=none
+    f7               free=1486 MiB psi=0.0 cap=none
+    f8               free=491 MiB psi=0.0 cap=none  NOT ADMITTING: 491 MiB free, below the 512 MiB floor
+    f9               free=1478 MiB psi=0.0 cap=none
+
+ramp     900 creates, 4 at a time
+         900 accepted in 1.773s (507.6/s)
+settle   after 10s: 285 up, 0 pending, 615 failed
+hold     20.0s  (touching)
+
+teardown 900 deletes
+         0 sandbox(es) left
+
+==============================================================
+creates   900 accepted, 0 refused, 0 errored   507.65/s
+[31mstarted   285 up, 0 pending, 615 failed to start[0m
+  NOT RUNNING  103x  node held it back: 497 MiB free, below its own 512 MiB floor
+  NOT RUNNING  103x  node held it back: 495 MiB free, below its own 512 MiB floor
+  NOT RUNNING  103x  node held it back: 507 MiB free, below its own 512 MiB floor
+          p50 7ms   p90 10ms   p99 23ms   max 30ms
+placement f10=150, f3=150, f5=150, f7=150, f9=150, f8=150
+          spread 0 between the busiest and quietest node
+store lock p50 0.3ms  p99 2.2ms  (held p99 4.0ms)
+master saw 900.0 placed, 0.0 refused, 0.0 demotions
+POST /v1/sandboxes server-side p99 7.5ms
+tiers at end  {'hot': 900}
+==============================================================
+wrote out/wall_web-1.json

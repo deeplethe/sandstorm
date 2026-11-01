@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install a forkd-compatible vmlinux. Two paths:
+# Install a sandstorm-compatible vmlinux. Two paths:
 #
 #   1. Download — fetch Firecracker's CI-blessed vmlinux-6.1.141 from
 #      AWS S3. ~40 MiB, takes seconds. Recommended for almost everyone.
@@ -9,8 +9,8 @@
 #      Use this if you want to audit / tune the kernel config, or your
 #      target architecture isn't x86_64.
 #
-# This is the recipe behind /var/lib/forkd/kernels/vmlinux as of
-# forkd v0.5.1. The shipped pre-v0.5.1 kernel was Linux 4.14.174 from
+# This is the recipe behind /var/lib/sandstorm/kernels/vmlinux as of
+# sandstorm v0.5.1. The shipped pre-v0.5.1 kernel was Linux 4.14.174 from
 # 2021 — predated CONFIG_HW_RANDOM_VIRTIO, CONFIG_RANDOM_TRUST_CPU,
 # CONFIG_VMGENID, random.trust_cpu= cmdline, and io_uring; in
 # particular CRNG never initialized inside a restored guest, so
@@ -31,13 +31,13 @@
 #
 # Verify after install:
 #
-#   forkd from-image python:3.12-slim --tag test-pyt
+#   sandstorm from-image python:3.12-slim --tag test-pyt
 #   # then inside a forked child:
 #   python3 -c 'import ssl; ssl.create_default_context(); print("ok")'
 
 set -euo pipefail
 
-OUT_PATH="${OUT_PATH:-/var/lib/forkd/kernels/vmlinux}"
+OUT_PATH="${OUT_PATH:-/var/lib/sandstorm/kernels/vmlinux}"
 KERNEL_URL="${KERNEL_URL:-https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.13/x86_64/vmlinux-6.1.141}"
 # sha256 pin for the FC CI vmlinux. Verified end-to-end on the dev
 # box on 2026-06-05 — `getrandom(2)` initializes, `import ssl` works,
@@ -59,7 +59,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# Privilege shim: when already root (e.g. `forkd quickstart` running
+# Privilege shim: when already root (e.g. `sandstorm quickstart` running
 # the embedded copy of this script in a container or via sudo -E),
 # `sudo` may not even be installed — call the commands directly.
 if [ "$(id -u)" -eq 0 ]; then
@@ -76,7 +76,7 @@ case "$MODE" in
         echo "==> downloading Firecracker CI vmlinux-6.1.141"
         echo "    from: $KERNEL_URL"
         echo "    to:   $OUT_PATH"
-        TMP="$(mktemp -t forkd-vmlinux.XXXXXX)"
+        TMP="$(mktemp -t sandstorm-vmlinux.XXXXXX)"
         # shellcheck disable=SC2064
         trap "rm -f '$TMP'" EXIT
         curl -fL --progress-bar -o "$TMP" "$KERNEL_URL"
@@ -112,6 +112,6 @@ echo
 echo "==> next: rebuild any v0.5.0-era snapshots so they pick up the"
 echo "    virtio-rng device and #218's CRNG fix:"
 echo
-echo "    forkd ls --snapshots   # see what you have"
-echo "    forkd rmi <tag>"
-echo "    forkd from-image python:3.12-slim --tag <tag>"
+echo "    sandstorm ls --snapshots   # see what you have"
+echo "    sandstorm rmi <tag>"
+echo "    sandstorm from-image python:3.12-slim --tag <tag>"

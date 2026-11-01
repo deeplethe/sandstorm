@@ -1,9 +1,0 @@
-# Pinned for reproducible rootfs builds.
-#
-# We deliberately do NOT pull in langchain / langgraph here. They're
-# heavy (~200 MiB pip-installed) and the demo doesn't need their
-# abstractions — we call the chat-completions endpoint directly with
-# `requests`. If you want to port this to a real LangGraph node,
-# the chat call maps 1:1 to a tool-calling node.
-
-requests==2.32.5

@@ -21,4 +21,4 @@ build/
 # Backed up out-of-band (e.g., iCloud / Dropbox / private notes repo),
 # not in this public repo.
 /notes/
-Cargo.lock
+.pi-subagents/

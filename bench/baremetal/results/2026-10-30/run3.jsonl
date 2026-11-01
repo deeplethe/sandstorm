@@ -1,0 +1,69 @@
+{"runtime": "kata", "app": "web", "kind": "start", "n": 1, "start_to_answer_s": 3.0435}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 2, "start_to_answer_s": 3.0027}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 3, "start_to_answer_s": 3.02}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 4, "start_to_answer_s": 3.0682}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 5, "start_to_answer_s": 3.0914}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 6, "start_to_answer_s": 2.9526}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 7, "start_to_answer_s": 2.9404}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 8, "start_to_answer_s": 3.0066}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 9, "start_to_answer_s": 2.9467}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 10, "start_to_answer_s": 2.9201}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 11, "start_to_answer_s": 2.9961}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 12, "start_to_answer_s": 2.9455}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 13, "start_to_answer_s": 3.0552}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 14, "start_to_answer_s": 2.9429}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 15, "start_to_answer_s": 2.9662}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 16, "start_to_answer_s": 3.0086}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 17, "start_to_answer_s": 2.9447}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 18, "start_to_answer_s": 3.123}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 19, "start_to_answer_s": 3.085}
+{"runtime": "kata", "app": "web", "kind": "start", "n": 20, "start_to_answer_s": 3.0589}
+{"runtime": "kata", "app": "web", "kind": "start_failed", "n": 81, "error": "Command '('docker', 'run', '-d', '--network', 'bridge', '--runtime', 'io.containerd.kata.v2', '-v', '/usr:/usr:ro', '-v', '/usr/lib:/lib:ro', '-v', '/usr/lib64:/lib64:ro', '-v', '/usr/bin:/bin:ro', '-v', '/usr/sbin:/sbin:ro', '-v', '/etc/alternatives:/etc/alternatives:ro', '-v', '/root/rootfs/app:/app:ro', 'bench-base:latest', '/usr/bin/python3', '/app/web.py')' returned non-zero exit status 125."}
+{"runtime": "kata", "app": "web", "kind": "summary", "avail_mib_before": 30521, "memory": {"kept": 81, "per_instance_mib": 223.3, "sampled": 20, "answered": 20, "stopped_by": "Command '('docker', 'run', '-d', '--network', 'bridge', '--runtime', 'io.containerd.kata.v2', '-v', '/usr:/usr:ro', '-v', '/usr/lib:/lib:ro', '-v', '/usr/lib64:/lib64:ro', '-v', '/usr/bin:/bin:ro', '-v', '/usr/sbin:/sbin:ro', '-v', '/etc/alternatives:/etc/alternatives:ro', '-v', '/root/rootfs/app:/app:ro', 'bench-base:latest', '/usr/bin/python3', '/app/web.py')' returned non-zero exit status 125."}}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 1, "start_to_answer_s": 3.5192}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 2, "start_to_answer_s": 3.3104}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 3, "start_to_answer_s": 3.2913}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 4, "start_to_answer_s": 3.2948}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 5, "start_to_answer_s": 3.203}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 6, "start_to_answer_s": 3.403}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 7, "start_to_answer_s": 3.2599}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 8, "start_to_answer_s": 3.2076}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 9, "start_to_answer_s": 3.3729}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 10, "start_to_answer_s": 3.2483}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 11, "start_to_answer_s": 3.2315}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 12, "start_to_answer_s": 3.2621}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 13, "start_to_answer_s": 3.4261}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 14, "start_to_answer_s": 3.2825}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 15, "start_to_answer_s": 3.2576}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 16, "start_to_answer_s": 3.6681}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 17, "start_to_answer_s": 3.6009}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 18, "start_to_answer_s": 3.2487}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 19, "start_to_answer_s": 3.5189}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 20, "start_to_answer_s": 3.4131}
+{"runtime": "kata", "app": "app64", "kind": "never_answered", "n": 56}
+{"runtime": "kata", "app": "app64", "kind": "start_failed", "n": 57, "error": "nd '('docker', 'run', '-d', '--network', 'bridge', '--runtime', 'io.containerd.kata.v2', '-v', '/usr:/usr:ro', '-v', '/usr/lib:/lib:ro', '-v', '/usr/lib64:/lib64:ro', '-v', '/usr/bin:/bin:ro', '-v', '/usr/sbin:/sbin:ro', '-v', '/etc/alternatives:/etc/alternatives:ro', '-v', '/root/rootfs/app:/app:ro', 'bench-base:latest', '/usr/bin/python3', '/app/srv.py', '64')' returned non-zero exit status 125."}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 1, "start_to_answer_s": 3.2193}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 2, "start_to_answer_s": 3.192}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 3, "start_to_answer_s": 3.6016}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 4, "start_to_answer_s": 3.3477}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 5, "start_to_answer_s": 3.49}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 6, "start_to_answer_s": 3.5579}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 7, "start_to_answer_s": 3.4207}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 8, "start_to_answer_s": 3.3316}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 9, "start_to_answer_s": 3.3116}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 10, "start_to_answer_s": 3.5168}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 11, "start_to_answer_s": 3.3561}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 12, "start_to_answer_s": 3.3822}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 13, "start_to_answer_s": 3.1646}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 14, "start_to_answer_s": 3.3041}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 15, "start_to_answer_s": 3.4798}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 16, "start_to_answer_s": 3.4923}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 17, "start_to_answer_s": 3.5618}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 18, "start_to_answer_s": 3.3362}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 19, "start_to_answer_s": 3.4121}
+{"runtime": "kata", "app": "app64", "kind": "start", "n": 20, "start_to_answer_s": 3.4984}
+{"runtime": "kata", "app": "app64", "kind": "never_answered", "n": 56}
+{"runtime": "kata", "app": "app64", "kind": "start_failed", "n": 57, "error": "nd '('docker', 'run', '-d', '--network', 'bridge', '--runtime', 'io.containerd.kata.v2', '-v', '/usr:/usr:ro', '-v', '/usr/lib:/lib:ro', '-v', '/usr/lib64:/lib64:ro', '-v', '/usr/bin:/bin:ro', '-v', '/usr/sbin:/sbin:ro', '-v', '/etc/alternatives:/etc/alternatives:ro', '-v', '/root/rootfs/app:/app:ro', 'bench-base:latest', '/usr/bin/python3', '/app/srv.py', '64')' returned non-zero exit status 125."}
+{"runtime": "kata", "kind": "cleanup_failed", "error": "docker rm failed: 6ac878f2\": could not kill container: tried to kill container, but did not receive an exit event\nError response from daemon: cannot remove container \"0e174e68507450b6d5b6930e1c678a5a77716f479ec6b7b8ca6c1337e3721be1\": could not kill container: tried to kill container, but did not receive an exit event"}
+{"runtime": "kata", "app": "app64", "kind": "summary", "avail_mib_before": 30530, "start": {"p50_ms": 3397.1, "min_ms": 3164.6, "p90_ms": 3561.8, "failed": 0}, "memory": {"kept": 57, "per_instance_mib": 307.8, "sampled": 20, "answered": 0, "stopped_by": "nd '('docker', 'run', '-d', '--network', 'bridge', '--runtime', 'io.containerd.kata.v2', '-v', '/usr:/usr:ro', '-v', '/usr/lib:/lib:ro', '-v', '/usr/lib64:/lib64:ro', '-v', '/usr/bin:/bin:ro', '-v', '/usr/sbin:/sbin:ro', '-v', '/etc/alternatives:/etc/alternatives:ro', '-v', '/root/rootfs/app:/app:ro', 'bench-base:latest', '/usr/bin/python3', '/app/srv.py', '64')' returned non-zero exit status 125."}}
+{"runtime": "kata", "app": "app64", "kind": "summary", "avail_mib_before": 30365, "memory": {"kept": 40, "per_instance_mib": 310.5, "sampled": 20, "answered": 20}}

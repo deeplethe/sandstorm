@@ -1,15 +1,15 @@
 name: publish-pypi
 
-# Publish the forkd Python SDK to PyPI when a GitHub Release is
+# Publish the sandstorm Python SDK to PyPI when a GitHub Release is
 # published. Uses PyPI's Trusted Publishers (OIDC) — no API token,
 # no repository secret. The trust relationship is configured on PyPI:
-# Owner=deeplethe, Repository=forkd, Workflow=publish-pypi.yml,
+# Owner=deeplethe, Repository=sandstorm, Workflow=publish-pypi.yml,
 # Environment=pypi.
 #
 # Trigger chain:
 #   push tag v* → release.yml builds binaries + creates GitHub Release
 #                 → this workflow fires on the "release published" event
-#                 → sdist + wheel uploaded to https://pypi.org/p/forkd
+#                 → sdist + wheel uploaded to https://pypi.org/p/sandstorm-sdk
 on:
   release:
     types: [published]
@@ -21,8 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     # The `release: published` event fires on every release in the
     # repo, including sibling packages with different tag prefixes
-    # (e.g. `mcp-v*` for `forkd-mcp`). Skip those — only forkd's own
-    # `v*` releases should publish the forkd SDK.
+    # (e.g. `mcp-v*` for `sandstorm-mcp`). Skip those — only sandstorm's own
+    # `v*` releases should publish the sandstorm SDK.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
     environment: pypi   # must match the GitHub environment + PyPI Trusted Publisher config
     permissions:

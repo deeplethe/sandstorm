@@ -1,0 +1,88 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "tok",
+    "ca": "ca.pem",
+    "pool": "default",
+    "template": "idle",
+    "tag": null,
+    "total": 14000,
+    "concurrency": 8,
+    "rate": 15.0,
+    "hold_secs": 0,
+    "touch": false,
+    "through_refusals": true,
+    "keep": true,
+    "allow_existing": true,
+    "settle_secs": 30.0,
+    "timeout": 60.0,
+    "out": "out/ceiling.json"
+  },
+  "ramp_secs": 936.076,
+  "creates": {
+    "attempted": 14000,
+    "placed": 14000,
+    "refused": 0,
+    "failed": 0,
+    "per_sec": 14.96,
+    "latency": {
+      "n": 14000,
+      "min": 0.002774359003524296,
+      "p50": 0.03390796799794771,
+      "p90": 0.15927209329747716,
+      "p99": 0.25536492825332974,
+      "max": 0.4607155959965894,
+      "mean": 0.05979744743481985
+    },
+    "refusal_reasons": [],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 30.0,
+    "up": 5876,
+    "pending": 80,
+    "failed": 8044,
+    "gone": 0,
+    "errors": [
+      [
+        "sb-88a14ea1a28eda002ed991f6c5135482: frozen -> snapshot: checkpointing sb-88a14ea1a28eda002ed991f6c5135482: running runsc [\"checkpoint\", \"--image-path=/var/lib/",
+        1
+      ],
+      [
+        "sb-0984e6428bbcf01015fdba5479862d37: frozen -> snapshot: checkpointing sb-0984e6428bbcf01015fdba5479862d37: running runsc [\"checkpoint\", \"--image-path=/var/lib/",
+        1
+      ],
+      [
+        "sb-49fde8c8019fa610df2ee6ac37651059: frozen -> snapshot: checkpointing sb-49fde8c8019fa610df2ee6ac37651059: running runsc [\"checkpoint\", \"--image-path=/var/lib/",
+        1
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 0,
+    "latency": {}
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 3616,
+    "f3": 1022,
+    "f5": 1022,
+    "f7": 3616,
+    "f8": 1109,
+    "f9": 3615
+  },
+  "end_tiers": {
+    "snapshot": 14000
+  },
+  "samples": [],
+  "control_plane": {
+    "creates_placed": 14000.0,
+    "creates_refused": 0.0,
+    "demotions": 28000.0,
+    "store_lock_wait_p50": 0.0030438109814425103,
+    "store_lock_wait_p99": 0.048745268314406585,
+    "store_lock_held_p99": 0.049026468761093366,
+    "create_route_p99": 0.04953034682080925
+  }
+}

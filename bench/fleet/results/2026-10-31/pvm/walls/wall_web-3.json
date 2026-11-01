@@ -1,0 +1,131 @@
+{
+  "master": "https://127.0.0.1:18092",
+  "args": {
+    "master": "https://127.0.0.1:18092",
+    "token_file": "tok",
+    "ca": "ca.pem",
+    "pool": "default",
+    "template": "web",
+    "tag": null,
+    "total": 900,
+    "concurrency": 4,
+    "rate": null,
+    "hold_secs": 20.0,
+    "touch": true,
+    "through_refusals": false,
+    "keep": false,
+    "allow_existing": true,
+    "settle_secs": 120.0,
+    "timeout": 60.0,
+    "out": "q/wall_web-3.json"
+  },
+  "ramp_secs": 4.853,
+  "creates": {
+    "attempted": 900,
+    "placed": 900,
+    "refused": 0,
+    "failed": 0,
+    "per_sec": 185.46,
+    "latency": {
+      "n": 900,
+      "min": 0.00426275200152304,
+      "p50": 0.018197033503383864,
+      "p90": 0.03868965849833331,
+      "p99": 0.07245724916589097,
+      "max": 0.09073668399651069,
+      "mean": 0.021233996955803983
+    },
+    "refusal_reasons": [],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 120.0,
+    "up": 45,
+    "pending": 0,
+    "failed": 855,
+    "gone": 0,
+    "errors": [
+      [
+        "node held it back: 482 MiB free, below its own 512 MiB floor, counting 302 MiB for sandboxes still starting",
+        223
+      ],
+      [
+        "node held it back: 481 MiB free, below its own 512 MiB floor, counting 302 MiB for sandboxes still starting",
+        142
+      ],
+      [
+        "node held it back: 484 MiB free, below its own 512 MiB floor, counting 304 MiB for sandboxes still starting",
+        109
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 900,
+    "latency": {
+      "n": 900,
+      "min": 0.0017440400115447119,
+      "p50": 0.00450135250139283,
+      "p90": 0.01119356188864913,
+      "p99": 0.10389297206667833,
+      "max": 0.9779028460034169,
+      "mean": 0.011466326161478517
+    }
+  },
+  "pool": "default",
+  "placement": {
+    "bm-pvm": 900
+  },
+  "end_tiers": {
+    "hot": 900
+  },
+  "samples": [
+    {
+      "t": 130.5,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "bm-pvm": {
+          "free_mib": 782,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 139.3,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "bm-pvm": {
+          "free_mib": 711,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 149.8,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "bm-pvm": {
+          "free_mib": 711,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    }
+  ],
+  "control_plane": {
+    "creates_placed": 900.0,
+    "creates_refused": 0.0,
+    "demotions": 1800.0,
+    "store_lock_wait_p50": 0.00025086205112997663,
+    "store_lock_wait_p99": 0.0004967068612373536,
+    "store_lock_held_p99": 0.014682494529540596,
+    "create_route_p99": 0.023372682926829286
+  }
+}

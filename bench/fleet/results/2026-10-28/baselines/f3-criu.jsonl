@@ -1,0 +1,12 @@
+{"t": 1793123489.6, "kind": "start", "cmd": "baselines", "args": {"apps": "/tmp/r4/apps", "runtimes": "podman", "only": "web,app16,app64,app256", "cap": 600, "checkpoint": true, "count": 10, "out": "out/criu.jsonl"}, "kernel": "7.0.0-14-generic", "avail_mib": 1412}
+{"t": 1793123496.556, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.4191, "freed_mib": 58, "restore_to_answer_s": 0.2259}
+{"t": 1793123497.108, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.302, "freed_mib": 71, "restore_to_answer_s": 0.25}
+{"t": 1793123497.539, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.1976, "freed_mib": 46, "restore_to_answer_s": 0.2329}
+{"t": 1793123497.983, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.205, "freed_mib": 21, "restore_to_answer_s": 0.2388}
+{"t": 1793123498.402, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.1861, "freed_mib": 107, "restore_to_answer_s": 0.2326}
+{"t": 1793123498.925, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.2789, "freed_mib": 77, "restore_to_answer_s": 0.2435}
+{"t": 1793123499.43, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.2885, "freed_mib": 68, "restore_to_answer_s": 0.2167}
+{"t": 1793123499.83, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.1829, "freed_mib": 85, "restore_to_answer_s": 0.2165}
+{"t": 1793123500.326, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.276, "freed_mib": 43, "restore_to_answer_s": 0.2203}
+{"t": 1793123500.828, "kind": "criu", "runtime": "podman", "app": "app64", "checkpoint_s": 0.2791, "freed_mib": 55, "restore_to_answer_s": 0.2221}
+{"t": 1793123504.687, "kind": "end"}

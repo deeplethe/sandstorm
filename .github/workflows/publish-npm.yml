@@ -8,7 +8,7 @@ on:
 
 jobs:
   publish:
-    name: build + upload @deeplethe/forkd to npm
+    name: build + upload @deeplethe/sandstorm to npm
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -32,10 +32,12 @@ jobs:
           ref="${GITHUB_REF#refs/tags/ts-v}"
           pkg_ver=$(jq -r '.version' package.json)
           if [[ "$pkg_ver" != "$ref" ]]; then
-            echo "::error::@deeplethe/forkd version ${pkg_ver} != release tag ${ref}"
+            echo "::error::@deeplethe/sandstorm version ${pkg_ver} != release tag ${ref}"
             exit 1
           fi
 
+      # Same reason as ci-typescript: npm 10 cannot install vitest 4.1.x.
+      - run: npm install -g npm@11
       - run: npm ci || npm install
       - run: npm run build
       - run: npm test

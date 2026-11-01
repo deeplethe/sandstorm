@@ -1,0 +1,6 @@
+# before
+         421 accepted in 2.325s (181.1/s)
+settle   after 60s: 12 up, 0 pending, 409 failed
+# after
+         436 accepted in 2.345s (185.9/s)
+settle   after 60s: 12 up, 0 pending, 424 failed

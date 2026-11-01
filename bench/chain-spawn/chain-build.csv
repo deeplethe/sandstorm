@@ -1,5 +1,0 @@
-layer,parent,depth,command_head,build_ms,memory_bin_bytes,vmstate_bytes,snapshot_du_kib
-chain-bench-l1-step1,demo-pyt,1,sh -c 'mkdir -p /opt/agent && echo CiIiIkxheWVyIDE6IGJ1aWxkIGEgc2FtcGxlIG51bWVya,6600,536870912,21900,524324
-chain-bench-l2-step2,chain-bench-l1-step1,2,sh -c 'mkdir -p /opt/agent && echo CiIiIkxheWVyIDI6IGV4dGVuZCBzdGVwMSB3aXRoIGRpc,6898,536870912,21900,524324
-chain-bench-l3-step3,chain-bench-l2-step2,3,sh -c 'mkdir -p /opt/agent && echo CiIiIkxheWVyIDM6IHNtYWxsIGxpbmVhciBzb2x2ZSB2a,7812,536870912,21900,524324
-chain-bench-flat,demo-pyt,1,sh -c 'mkdir -p /opt/agent && echo CiIiIkxheWVyIDE6IGJ1aWxkIGEgc2FtcGxlIG51bWVya,6833,536870912,21900,524324

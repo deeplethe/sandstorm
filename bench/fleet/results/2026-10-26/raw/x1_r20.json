@@ -1,0 +1,98 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "/tmp/tok",
+    "ca": "/tmp/ca.pem",
+    "pool": "default",
+    "template": "py",
+    "tag": null,
+    "total": 1800,
+    "concurrency": 8,
+    "rate": 20.0,
+    "hold_secs": 0,
+    "touch": false,
+    "through_refusals": true,
+    "keep": true,
+    "allow_existing": true,
+    "settle_secs": 10.0,
+    "timeout": 60.0,
+    "out": "/tmp/run2/x1_r20.json"
+  },
+  "ramp_secs": 90.214,
+  "creates": {
+    "attempted": 1800,
+    "placed": 1776,
+    "refused": 24,
+    "failed": 0,
+    "per_sec": 19.69,
+    "latency": {
+      "n": 1776,
+      "min": 0.0030117919995973352,
+      "p50": 0.003523219500493724,
+      "p90": 0.005348579499695916,
+      "p99": 0.019636944498415687,
+      "max": 0.06029222100187326,
+      "mean": 0.004322803641925602
+    },
+    "refusal_reasons": [
+      [
+        "every node in pool default is too loaded: f10: 506 MiB free, below the 512 MiB floor; f3: 511 MiB free, below the 512 MiB floor; f5: 507 MiB free, below the 512 MiB floor; f7: 507 MiB free, below the ",
+        18
+      ],
+      [
+        "every node in pool default is too loaded: f10: 504 MiB free, below the 512 MiB floor; f3: 502 MiB free, below the 512 MiB floor; f5: 497 MiB free, below the 512 MiB floor; f7: 509 MiB free, below the ",
+        6
+      ]
+    ],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 10.0,
+    "up": 1524,
+    "pending": 0,
+    "failed": 252,
+    "gone": 0,
+    "errors": [
+      [
+        "node held it back: 509 MiB free, below its own 512 MiB floor",
+        38
+      ],
+      [
+        "node held it back: 510 MiB free, below its own 512 MiB floor",
+        27
+      ],
+      [
+        "node held it back: 503 MiB free, below its own 512 MiB floor",
+        25
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 0,
+    "latency": {}
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 306,
+    "f3": 296,
+    "f5": 299,
+    "f7": 279,
+    "f8": 290,
+    "f9": 306
+  },
+  "end_tiers": {
+    "snapshot": 2991,
+    "frozen": 135
+  },
+  "samples": [],
+  "control_plane": {
+    "creates_placed": 1776.0,
+    "creates_refused": 24.0,
+    "demotions": 3479.0,
+    "store_lock_wait_p50": 0.00025949253731343284,
+    "store_lock_wait_p99": 0.004509251968503931,
+    "store_lock_held_p99": 0.009889121887287024,
+    "create_route_p99": 0.008214285714285714
+  }
+}

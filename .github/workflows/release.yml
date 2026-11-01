@@ -38,7 +38,10 @@ permissions:
 jobs:
   binaries:
     name: build binaries (x86_64-linux)
-    runs-on: ubuntu-latest
+    # A binary needs the glibc it was linked against, and a node runs the
+    # master's binary. Built on ubuntu-latest it needs 2.38, which leaves out
+    # Ubuntu 22.04 and Debian 12.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
 
@@ -46,19 +49,31 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: cargo build --release --workspace
-        run: cargo build --release --workspace
+      # The console is a TypeScript + React app (web/console) that build.rs
+      # embeds into sandstormd. Built first, so every binary below carries it;
+      # this also type-checks it.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: web/console/package-lock.json
+      - name: build the console
+        working-directory: web/console
+        run: npm ci && npm run build
 
+      - name: cargo build --release --workspace
+        run: cargo build --release --workspace --locked
+
+      # sandstormd is the one binary: master, node and console. The v0.5 CLI
+      # (`sandstorm`) left the tree in #362, so it is no longer staged.
       - name: Stage release artifacts
         run: |
           mkdir -p dist
-          cp target/release/forkd            dist/
-          cp target/release/forkd-controller dist/
+          cp target/release/sandstormd dist/
           cd dist
-          tar czf "../forkd-${GITHUB_REF_NAME}-x86_64-linux.tar.gz" \
-              forkd forkd-controller
+          tar czf "../sandstorm-${GITHUB_REF_NAME}-x86_64-linux.tar.gz" sandstormd
           cd ..
-          sha256sum forkd-*.tar.gz > SHA256SUMS
+          sha256sum sandstorm-*.tar.gz > SHA256SUMS
 
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v3
@@ -69,7 +84,7 @@ jobs:
           # release still lands, just without the auto-chain.
           token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           files: |
-            forkd-*.tar.gz
+            sandstorm-*.tar.gz
             SHA256SUMS
           generate_release_notes: true
           # Don't auto-mark as a "latest release" for pre-1.0 unless
@@ -98,8 +113,8 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/forkd-controller:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/forkd-controller:latest
+            ghcr.io/${{ github.repository_owner }}/sandstormd:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/sandstormd:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -119,7 +134,7 @@ jobs:
     name: trigger publish-pypi
     runs-on: ubuntu-latest
     needs: [binaries]
-    # forkd-mcp uses its own tag prefix (mcp-v*); only chain the forkd
+    # sandstorm-mcp uses its own tag prefix (mcp-v*); only chain the sandstorm
     # Python SDK publish for `v*` tags on the main package.
     if: startsWith(github.ref_name, 'v')
     steps:

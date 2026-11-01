@@ -1,19 +1,19 @@
 {
-  "name": "@deeplethe/forkd",
-  "version": "0.5.3",
-  "description": "TypeScript client for forkd — open-source fork-on-write microVM primitive for AI agents",
+  "name": "@deeplethe/sandstorm",
+  "version": "0.6.0",
+  "description": "TypeScript client for Sandstorm: gVisor and Firecracker sandboxes across a fleet of nodes",
   "license": "Apache-2.0",
   "author": "Deeplethe <info@deeplethe.com>",
-  "homepage": "https://github.com/deeplethe/forkd",
+  "homepage": "https://github.com/deeplethe/sandstorm",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deeplethe/forkd.git",
+    "url": "git+https://github.com/deeplethe/sandstorm.git",
     "directory": "sdk/typescript"
   },
-  "bugs": "https://github.com/deeplethe/forkd/issues",
+  "bugs": "https://github.com/deeplethe/sandstorm/issues",
   "keywords": [
     "sandbox",
-    "microvm",
+    "gvisor",
     "firecracker",
     "fork",
     "ai-agents",
@@ -36,7 +36,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -48,7 +48,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.12"
   },
   "publishConfig": {
     "access": "public",

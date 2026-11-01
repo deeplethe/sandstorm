@@ -1,0 +1,44 @@
+{"t": 1793259144.735, "kind": "start", "cmd": "baselines", "args": {"apps": "/tmp/hb/apps", "runtimes": "process", "only": "app16,app64,app256,app512,app1024", "cap": 600, "checkpoint": false, "count": 10, "out": "/tmp/hb/f7-process-1.jsonl"}, "kernel": "7.0.0-14-generic", "avail_mib": 1182}
+{"t": 1793259147.899, "kind": "started", "runtime": "process", "app": "app16", "n": 0, "start_to_answer_s": 0.1186, "avail_mib": 1166}
+{"t": 1793259148.002, "kind": "started", "runtime": "process", "app": "app16", "n": 1, "start_to_answer_s": 0.1025, "avail_mib": 1136}
+{"t": 1793259148.105, "kind": "started", "runtime": "process", "app": "app16", "n": 2, "start_to_answer_s": 0.1032, "avail_mib": 1109}
+{"t": 1793259148.208, "kind": "started", "runtime": "process", "app": "app16", "n": 3, "start_to_answer_s": 0.1025, "avail_mib": 1072}
+{"t": 1793259148.311, "kind": "started", "runtime": "process", "app": "app16", "n": 4, "start_to_answer_s": 0.1033, "avail_mib": 1039}
+{"t": 1793259148.466, "kind": "started", "runtime": "process", "app": "app16", "n": 5, "start_to_answer_s": 0.1552, "avail_mib": 1023}
+{"t": 1793259148.721, "kind": "started", "runtime": "process", "app": "app16", "n": 6, "start_to_answer_s": 0.2546, "avail_mib": 995}
+{"t": 1793259148.825, "kind": "started", "runtime": "process", "app": "app16", "n": 7, "start_to_answer_s": 0.1033, "avail_mib": 962}
+{"t": 1793259148.979, "kind": "started", "runtime": "process", "app": "app16", "n": 8, "start_to_answer_s": 0.1544, "avail_mib": 921}
+{"t": 1793259149.133, "kind": "started", "runtime": "process", "app": "app16", "n": 9, "start_to_answer_s": 0.1539, "avail_mib": 893}
+{"t": 1793259149.237, "kind": "started", "runtime": "process", "app": "app16", "n": 10, "start_to_answer_s": 0.1032, "avail_mib": 860}
+{"t": 1793259149.39, "kind": "started", "runtime": "process", "app": "app16", "n": 11, "start_to_answer_s": 0.153, "avail_mib": 834}
+{"t": 1793259149.543, "kind": "started", "runtime": "process", "app": "app16", "n": 12, "start_to_answer_s": 0.153, "avail_mib": 803}
+{"t": 1793259149.697, "kind": "started", "runtime": "process", "app": "app16", "n": 13, "start_to_answer_s": 0.1536, "avail_mib": 757}
+{"t": 1793259149.799, "kind": "started", "runtime": "process", "app": "app16", "n": 14, "start_to_answer_s": 0.1024, "avail_mib": 723}
+{"t": 1793259149.902, "kind": "started", "runtime": "process", "app": "app16", "n": 15, "start_to_answer_s": 0.1024, "avail_mib": 691}
+{"t": 1793259150.055, "kind": "started", "runtime": "process", "app": "app16", "n": 16, "start_to_answer_s": 0.1533, "avail_mib": 660}
+{"t": 1793259150.158, "kind": "started", "runtime": "process", "app": "app16", "n": 17, "start_to_answer_s": 0.1025, "avail_mib": 626}
+{"t": 1793259150.261, "kind": "started", "runtime": "process", "app": "app16", "n": 18, "start_to_answer_s": 0.1025, "avail_mib": 594}
+{"t": 1793259150.414, "kind": "started", "runtime": "process", "app": "app16", "n": 19, "start_to_answer_s": 0.1531, "avail_mib": 561}
+{"t": 1793259150.516, "kind": "started", "runtime": "process", "app": "app16", "n": 20, "start_to_answer_s": 0.1024, "avail_mib": 527}
+{"t": 1793259150.619, "kind": "started", "runtime": "process", "app": "app16", "n": 21, "start_to_answer_s": 0.1025, "avail_mib": 492}
+{"t": 1793259150.654, "kind": "density", "runtime": "process", "app": "app16", "instances": 22, "avail_before_mib": 1183, "avail_after_mib": 507, "answer_p50_ms": 1.11, "answer_p99_ms": 2.93}
+{"t": 1793259160.798, "kind": "started", "runtime": "process", "app": "app64", "n": 0, "start_to_answer_s": 0.1028, "avail_mib": 1103}
+{"t": 1793259160.952, "kind": "started", "runtime": "process", "app": "app64", "n": 1, "start_to_answer_s": 0.1533, "avail_mib": 1071}
+{"t": 1793259161.105, "kind": "started", "runtime": "process", "app": "app64", "n": 2, "start_to_answer_s": 0.1532, "avail_mib": 989}
+{"t": 1793259161.258, "kind": "started", "runtime": "process", "app": "app64", "n": 3, "start_to_answer_s": 0.1532, "avail_mib": 906}
+{"t": 1793259161.464, "kind": "started", "runtime": "process", "app": "app64", "n": 4, "start_to_answer_s": 0.2055, "avail_mib": 826}
+{"t": 1793259161.668, "kind": "started", "runtime": "process", "app": "app64", "n": 5, "start_to_answer_s": 0.2037, "avail_mib": 747}
+{"t": 1793259161.821, "kind": "started", "runtime": "process", "app": "app64", "n": 6, "start_to_answer_s": 0.1533, "avail_mib": 664}
+{"t": 1793259161.975, "kind": "started", "runtime": "process", "app": "app64", "n": 7, "start_to_answer_s": 0.1533, "avail_mib": 584}
+{"t": 1793259162.128, "kind": "started", "runtime": "process", "app": "app64", "n": 8, "start_to_answer_s": 0.1532, "avail_mib": 504}
+{"t": 1793259162.138, "kind": "density", "runtime": "process", "app": "app64", "instances": 9, "avail_before_mib": 1182, "avail_after_mib": 504, "answer_p50_ms": 1.1, "answer_p99_ms": 1.13}
+{"t": 1793259172.482, "kind": "started", "runtime": "process", "app": "app256", "n": 0, "start_to_answer_s": 0.3057, "avail_mib": 960}
+{"t": 1793259172.889, "kind": "started", "runtime": "process", "app": "app256", "n": 1, "start_to_answer_s": 0.4066, "avail_mib": 686}
+{"t": 1793259173.145, "kind": "started", "runtime": "process", "app": "app256", "n": 2, "start_to_answer_s": 0.2556, "avail_mib": 413}
+{"t": 1793259173.149, "kind": "density", "runtime": "process", "app": "app256", "instances": 3, "avail_before_mib": 1183, "avail_after_mib": 413, "answer_p50_ms": 1.48, "answer_p99_ms": 1.48}
+{"t": 1793259183.747, "kind": "started", "runtime": "process", "app": "app512", "n": 0, "start_to_answer_s": 0.5587, "avail_mib": 681}
+{"t": 1793259184.433, "kind": "started", "runtime": "process", "app": "app512", "n": 1, "start_to_answer_s": 0.6846, "avail_mib": 214}
+{"t": 1793259184.451, "kind": "density", "runtime": "process", "app": "app512", "instances": 2, "avail_before_mib": 1226, "avail_after_mib": 214, "answer_p50_ms": 15.53, "answer_p99_ms": 2.16}
+{"t": 1793259195.567, "kind": "started", "runtime": "process", "app": "app1024", "n": 0, "start_to_answer_s": 1.0653, "avail_mib": 239}
+{"t": 1793259195.571, "kind": "density", "runtime": "process", "app": "app1024", "instances": 1, "avail_before_mib": 1252, "avail_after_mib": 239, "answer_p50_ms": 3.28, "answer_p99_ms": 3.28}
+{"t": 1793259208.684, "kind": "end"}

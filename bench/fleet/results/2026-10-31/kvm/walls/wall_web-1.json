@@ -1,0 +1,123 @@
+{
+  "master": "https://127.0.0.1:18092",
+  "args": {
+    "master": "https://127.0.0.1:18092",
+    "token_file": "tok",
+    "ca": "ca.pem",
+    "pool": "default",
+    "template": "web",
+    "tag": null,
+    "total": 900,
+    "concurrency": 4,
+    "rate": null,
+    "hold_secs": 20.0,
+    "touch": true,
+    "through_refusals": false,
+    "keep": false,
+    "allow_existing": true,
+    "settle_secs": 120.0,
+    "timeout": 60.0,
+    "out": "w2/wall_web-14.json"
+  },
+  "ramp_secs": 2.259,
+  "creates": {
+    "attempted": 900,
+    "placed": 900,
+    "refused": 0,
+    "failed": 0,
+    "per_sec": 398.41,
+    "latency": {
+      "n": 900,
+      "min": 0.0035319949965924025,
+      "p50": 0.008866762502293568,
+      "p90": 0.014998552695033142,
+      "p99": 0.027928476944653082,
+      "max": 0.035125736001646146,
+      "mean": 0.0098602598776213
+    },
+    "refusal_reasons": [],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 120.0,
+    "up": 271,
+    "pending": 0,
+    "failed": 629,
+    "gone": 0,
+    "errors": [
+      [
+        "node held it back: 288 MiB of swap free, below its own 512 MiB floor",
+        629
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 900,
+    "latency": {
+      "n": 900,
+      "min": 0.0026939590024994686,
+      "p50": 0.006493651504570153,
+      "p90": 0.0131898121064296,
+      "p99": 0.05626312415755816,
+      "max": 0.20155406100093387,
+      "mean": 0.008958052374720056
+    }
+  },
+  "pool": "default",
+  "placement": {
+    "kvm1": 900
+  },
+  "end_tiers": {
+    "hot": 900
+  },
+  "samples": [
+    {
+      "t": 124.1,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "kvm1": {
+          "free_mib": 7322,
+          "psi": 4.91,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 131.1,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "kvm1": {
+          "free_mib": 7322,
+          "psi": 4.91,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 138.0,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "kvm1": {
+          "free_mib": 7322,
+          "psi": 4.91,
+          "not_admitting": null
+        }
+      }
+    }
+  ],
+  "control_plane": {
+    "creates_placed": 900.0,
+    "creates_refused": 0.0,
+    "demotions": 1800.0,
+    "store_lock_wait_p50": 0.00026455564596329444,
+    "store_lock_wait_p99": 0.003556089743589767,
+    "store_lock_held_p99": 0.04257723577235764,
+    "create_route_p99": 0.018275862068965518
+  }
+}

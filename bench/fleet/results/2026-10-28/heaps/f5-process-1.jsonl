@@ -1,0 +1,47 @@
+{"t": 1793259144.77, "kind": "start", "cmd": "baselines", "args": {"apps": "/tmp/hb/apps", "runtimes": "process", "only": "app16,app64,app256,app512,app1024", "cap": 600, "checkpoint": false, "count": 10, "out": "/tmp/hb/f5-process-1.jsonl"}, "kernel": "7.0.0-14-generic", "avail_mib": 1265}
+{"t": 1793259147.918, "kind": "started", "runtime": "process", "app": "app16", "n": 0, "start_to_answer_s": 0.1129, "avail_mib": 1249}
+{"t": 1793259148.021, "kind": "started", "runtime": "process", "app": "app16", "n": 1, "start_to_answer_s": 0.1028, "avail_mib": 1216}
+{"t": 1793259148.124, "kind": "started", "runtime": "process", "app": "app16", "n": 2, "start_to_answer_s": 0.1022, "avail_mib": 1181}
+{"t": 1793259148.226, "kind": "started", "runtime": "process", "app": "app16", "n": 3, "start_to_answer_s": 0.1026, "avail_mib": 1153}
+{"t": 1793259148.329, "kind": "started", "runtime": "process", "app": "app16", "n": 4, "start_to_answer_s": 0.1026, "avail_mib": 1116}
+{"t": 1793259148.433, "kind": "started", "runtime": "process", "app": "app16", "n": 5, "start_to_answer_s": 0.1035, "avail_mib": 1088}
+{"t": 1793259148.535, "kind": "started", "runtime": "process", "app": "app16", "n": 6, "start_to_answer_s": 0.1022, "avail_mib": 1050}
+{"t": 1793259148.638, "kind": "started", "runtime": "process", "app": "app16", "n": 7, "start_to_answer_s": 0.1027, "avail_mib": 1019}
+{"t": 1793259148.741, "kind": "started", "runtime": "process", "app": "app16", "n": 8, "start_to_answer_s": 0.1028, "avail_mib": 988}
+{"t": 1793259148.844, "kind": "started", "runtime": "process", "app": "app16", "n": 9, "start_to_answer_s": 0.1031, "avail_mib": 950}
+{"t": 1793259148.949, "kind": "started", "runtime": "process", "app": "app16", "n": 10, "start_to_answer_s": 0.1044, "avail_mib": 923}
+{"t": 1793259149.053, "kind": "started", "runtime": "process", "app": "app16", "n": 11, "start_to_answer_s": 0.1044, "avail_mib": 898}
+{"t": 1793259149.307, "kind": "started", "runtime": "process", "app": "app16", "n": 12, "start_to_answer_s": 0.2536, "avail_mib": 866}
+{"t": 1793259149.409, "kind": "started", "runtime": "process", "app": "app16", "n": 13, "start_to_answer_s": 0.1021, "avail_mib": 830}
+{"t": 1793259149.512, "kind": "started", "runtime": "process", "app": "app16", "n": 14, "start_to_answer_s": 0.102, "avail_mib": 800}
+{"t": 1793259149.614, "kind": "started", "runtime": "process", "app": "app16", "n": 15, "start_to_answer_s": 0.1024, "avail_mib": 768}
+{"t": 1793259149.767, "kind": "started", "runtime": "process", "app": "app16", "n": 16, "start_to_answer_s": 0.1532, "avail_mib": 723}
+{"t": 1793259149.87, "kind": "started", "runtime": "process", "app": "app16", "n": 17, "start_to_answer_s": 0.1026, "avail_mib": 701}
+{"t": 1793259149.973, "kind": "started", "runtime": "process", "app": "app16", "n": 18, "start_to_answer_s": 0.1025, "avail_mib": 668}
+{"t": 1793259150.126, "kind": "started", "runtime": "process", "app": "app16", "n": 19, "start_to_answer_s": 0.1529, "avail_mib": 633}
+{"t": 1793259150.229, "kind": "started", "runtime": "process", "app": "app16", "n": 20, "start_to_answer_s": 0.1025, "avail_mib": 601}
+{"t": 1793259150.331, "kind": "started", "runtime": "process", "app": "app16", "n": 21, "start_to_answer_s": 0.1026, "avail_mib": 559}
+{"t": 1793259150.485, "kind": "started", "runtime": "process", "app": "app16", "n": 22, "start_to_answer_s": 0.154, "avail_mib": 538}
+{"t": 1793259150.588, "kind": "started", "runtime": "process", "app": "app16", "n": 23, "start_to_answer_s": 0.1025, "avail_mib": 502}
+{"t": 1793259150.609, "kind": "density", "runtime": "process", "app": "app16", "instances": 24, "avail_before_mib": 1265, "avail_after_mib": 502, "answer_p50_ms": 0.85, "answer_p99_ms": 1.03}
+{"t": 1793259160.749, "kind": "started", "runtime": "process", "app": "app64", "n": 0, "start_to_answer_s": 0.1027, "avail_mib": 1198}
+{"t": 1793259160.852, "kind": "started", "runtime": "process", "app": "app64", "n": 1, "start_to_answer_s": 0.1026, "avail_mib": 1129}
+{"t": 1793259161.005, "kind": "started", "runtime": "process", "app": "app64", "n": 2, "start_to_answer_s": 0.1531, "avail_mib": 1055}
+{"t": 1793259161.159, "kind": "started", "runtime": "process", "app": "app64", "n": 3, "start_to_answer_s": 0.1531, "avail_mib": 972}
+{"t": 1793259161.312, "kind": "started", "runtime": "process", "app": "app64", "n": 4, "start_to_answer_s": 0.1528, "avail_mib": 892}
+{"t": 1793259161.515, "kind": "started", "runtime": "process", "app": "app64", "n": 5, "start_to_answer_s": 0.2034, "avail_mib": 810}
+{"t": 1793259161.719, "kind": "started", "runtime": "process", "app": "app64", "n": 6, "start_to_answer_s": 0.2035, "avail_mib": 730}
+{"t": 1793259161.873, "kind": "started", "runtime": "process", "app": "app64", "n": 7, "start_to_answer_s": 0.154, "avail_mib": 646}
+{"t": 1793259162.027, "kind": "started", "runtime": "process", "app": "app64", "n": 8, "start_to_answer_s": 0.1539, "avail_mib": 567}
+{"t": 1793259162.181, "kind": "started", "runtime": "process", "app": "app64", "n": 9, "start_to_answer_s": 0.1538, "avail_mib": 484}
+{"t": 1793259162.19, "kind": "density", "runtime": "process", "app": "app64", "instances": 10, "avail_before_mib": 1255, "avail_after_mib": 484, "answer_p50_ms": 0.87, "answer_p99_ms": 1.03}
+{"t": 1793259172.477, "kind": "started", "runtime": "process", "app": "app256", "n": 0, "start_to_answer_s": 0.2557, "avail_mib": 1023}
+{"t": 1793259172.883, "kind": "started", "runtime": "process", "app": "app256", "n": 1, "start_to_answer_s": 0.4057, "avail_mib": 747}
+{"t": 1793259173.138, "kind": "started", "runtime": "process", "app": "app256", "n": 2, "start_to_answer_s": 0.255, "avail_mib": 474}
+{"t": 1793259173.143, "kind": "density", "runtime": "process", "app": "app256", "instances": 3, "avail_before_mib": 1253, "avail_after_mib": 473, "answer_p50_ms": 1.43, "answer_p99_ms": 1.43}
+{"t": 1793259183.628, "kind": "started", "runtime": "process", "app": "app512", "n": 0, "start_to_answer_s": 0.4567, "avail_mib": 761}
+{"t": 1793259184.046, "kind": "started", "runtime": "process", "app": "app512", "n": 1, "start_to_answer_s": 0.4179, "avail_mib": 239}
+{"t": 1793259184.061, "kind": "density", "runtime": "process", "app": "app512", "instances": 2, "avail_before_mib": 1251, "avail_after_mib": 239, "answer_p50_ms": 12.13, "answer_p99_ms": 1.93}
+{"t": 1793259195.008, "kind": "started", "runtime": "process", "app": "app1024", "n": 0, "start_to_answer_s": 0.9125, "avail_mib": 256}
+{"t": 1793259195.011, "kind": "density", "runtime": "process", "app": "app1024", "instances": 1, "avail_before_mib": 1255, "avail_after_mib": 256, "answer_p50_ms": 2.89, "answer_p99_ms": 2.89}
+{"t": 1793259208.099, "kind": "end"}

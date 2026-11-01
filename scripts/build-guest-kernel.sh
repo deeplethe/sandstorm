@@ -1,15 +1,15 @@
 #!/bin/bash
-# Build a forkd-compatible vmlinux from a recent Linux LTS source.
+# Build a sandstorm-compatible vmlinux from a recent Linux LTS source.
 #
-# This is the build recipe behind `/var/lib/forkd/kernels/vmlinux`
-# shipped with forkd v0.5.1 and later. Reproducible: same inputs
+# This is the build recipe behind `/var/lib/sandstorm/kernels/vmlinux`
+# shipped with sandstorm v0.5.1 and later. Reproducible: same inputs
 # (kernel branch + FC reference config) → byte-equivalent vmlinux
 # modulo build environment.
 #
 # Why this exists
 # ---------------
 #
-# forkd v0.5.0 and earlier shipped a Linux 4.14.174 vmlinux built in
+# sandstorm v0.5.0 and earlier shipped a Linux 4.14.174 vmlinux built in
 # 2021. That kernel predated:
 #
 #   - CONFIG_HW_RANDOM_VIRTIO=y      (virtio-rng driver binding)
@@ -28,7 +28,7 @@
 # Usage
 # -----
 #
-#   # Default: Linux 6.1 LTS, install to /var/lib/forkd/kernels/vmlinux
+#   # Default: Linux 6.1 LTS, install to /var/lib/sandstorm/kernels/vmlinux
 #   sudo ./scripts/build-guest-kernel.sh
 #
 #   # Override target version / work dir / install path:
@@ -52,16 +52,16 @@
 set -euo pipefail
 
 KERNEL_BRANCH="${KERNEL_BRANCH:-v6.1}"
-WORK_DIR="${WORK_DIR:-/tmp/forkd-kernel-build}"
+WORK_DIR="${WORK_DIR:-/tmp/sandstorm-kernel-build}"
 FC_VERSION="${FC_VERSION:-v1.12.0}"
-OUT_PATH="${OUT_PATH:-/var/lib/forkd/kernels/vmlinux}"
+OUT_PATH="${OUT_PATH:-/var/lib/sandstorm/kernels/vmlinux}"
 ARCH="${ARCH:-x86_64}"
 
 VERSION_NUMBER="${KERNEL_BRANCH#v}"
 SRC_DIR="${WORK_DIR}/linux-${VERSION_NUMBER}"
 CONFIG_URL="https://raw.githubusercontent.com/firecracker-microvm/firecracker/${FC_VERSION}/resources/guest_configs/microvm-kernel-ci-${ARCH}-${VERSION_NUMBER}.config"
 
-echo "==> forkd guest-kernel build"
+echo "==> sandstorm guest-kernel build"
 echo "    kernel:      ${KERNEL_BRANCH}"
 echo "    arch:        ${ARCH}"
 echo "    fc config:   ${FC_VERSION}"
@@ -136,7 +136,7 @@ if [ "$OUT_PATH" != "" ]; then
     echo "==> installed to $OUT_PATH"
     echo ""
     echo "Verify in a new guest:"
-    echo "    forkd from-image python:3.12-slim --tag test-pyt"
-    echo "    forkd fork --tag test-pyt -n 1"
+    echo "    sandstorm from-image python:3.12-slim --tag test-pyt"
+    echo "    sandstorm fork --tag test-pyt -n 1"
     echo "    # then in the child: python3 -c 'import ssl; ssl.create_default_context()'"
 fi

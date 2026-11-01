@@ -3,19 +3,19 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forkd"
-version = "0.5.3"
-description = "Open-source fork-on-write microVM sandbox primitive (E2B-compatible surface)"
+name = "sandstorm-sdk"
+version = "0.6.0"
+description = "Python client for Sandstorm: gVisor and Firecracker sandboxes across a fleet of nodes (E2B-compatible surface)"
 readme = "README.md"
 authors = [{name = "Deeplethe", email = "info@deeplethe.com"}]
 license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
-keywords = ["sandbox", "firecracker", "microvm", "fork", "ai-agents"]
+keywords = ["sandbox", "gvisor", "firecracker", "fork", "ai-agents"]
 
 [project.urls]
-Homepage = "https://github.com/deeplethe/forkd"
-Source = "https://github.com/deeplethe/forkd"
-Issues = "https://github.com/deeplethe/forkd/issues"
+Homepage = "https://github.com/deeplethe/sandstorm"
+Source = "https://github.com/deeplethe/sandstorm"
+Issues = "https://github.com/deeplethe/sandstorm/issues"
 
 [tool.setuptools]
-packages = ["forkd"]
+packages = ["sandstorm"]

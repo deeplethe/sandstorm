@@ -1,0 +1,5 @@
+# Keep the build context small and never send host builds into the image.
+target/
+**/node_modules/
+web/console/dist/
+.git/

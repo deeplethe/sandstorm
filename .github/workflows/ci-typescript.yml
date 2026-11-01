@@ -12,6 +12,12 @@ on:
       - 'sdk/typescript/**'
       - '.github/workflows/ci-typescript.yml'
 
+# Least privilege: both jobs only check out and test, so the default token
+# -- which can carry write scope -- is more than they need. CodeQL's
+# actions/missing-workflow-permissions flagged every job here.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: build + test on Node ${{ matrix.node }}
@@ -19,7 +25,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['18', '20', '22']
+        # 20 is the floor: vitest 4 declares `^20 || ^22 || >=24`, and npm 11
+        # -- which is needed to install it at all, see below -- itself wants
+        # node >= 20.17. Node 18 went end-of-life in April 2025, and the SDK
+        # publishes no runtime dependencies, so dropping it costs test
+        # coverage on an unmaintained runtime, not anything a consumer gets.
+        node: ['20', '22']
     defaults:
       run:
         working-directory: sdk/typescript
@@ -30,6 +41,12 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: 'npm'
           cache-dependency-path: sdk/typescript/package-lock.json
+      # npm 10 cannot install vitest 4.1.x at all: Arborist crashes with
+      # `Cannot read properties of null (reading 'edgesOut')`, reproducible
+      # in an empty directory with no lockfile. Every 4.1.z fails, 4.0.0 and
+      # 3.2.7 succeed, and npm 11 handles 4.1.12 fine -- so this is a bug in
+      # npm, not in the lockfile, and the pinned major is the fix.
+      - run: npm install -g npm@11
       - run: npm ci || npm install
       - run: npm run lint
       - run: npm run build

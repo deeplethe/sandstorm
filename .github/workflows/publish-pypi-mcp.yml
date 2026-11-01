@@ -1,8 +1,8 @@
 name: publish-pypi-mcp
 
-# Publish the forkd-mcp package to PyPI. Parallels publish-pypi.yml
+# Publish the sandstorm-mcp package to PyPI. Parallels publish-pypi.yml
 # but for the sdk/mcp/ subdirectory and a separate package name, so
-# forkd and forkd-mcp can release independently.
+# sandstorm and sandstorm-mcp can release independently.
 #
 # Trigger:
 #   - push tag matching `mcp-v*` (e.g. mcp-v0.1.0)
@@ -12,7 +12,7 @@ name: publish-pypi-mcp
 # project maintainer must register a pending publisher on PyPI at
 # https://pypi.org/manage/account/publishing/ with:
 #   Owner:         deeplethe
-#   Repository:    forkd
+#   Repository:    sandstorm
 #   Workflow:      publish-pypi-mcp.yml
 #   Environment:   pypi-mcp
 # That bootstraps the project and lets this workflow upload without a
@@ -26,7 +26,7 @@ on:
 
 jobs:
   publish:
-    name: build + upload forkd-mcp to PyPI
+    name: build + upload sandstorm-mcp to PyPI
     runs-on: ubuntu-latest
     environment: pypi-mcp
     permissions:
@@ -47,7 +47,7 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
             pkg_ver=$(grep -E '^version = ' sdk/mcp/pyproject.toml | head -1 | cut -d'"' -f2)
             if [ "${pkg_ver}" != "${ref}" ]; then
-              echo "::error::forkd-mcp version ${pkg_ver} != release tag ${ref}"
+              echo "::error::sandstorm-mcp version ${pkg_ver} != release tag ${ref}"
               exit 1
             fi
           fi

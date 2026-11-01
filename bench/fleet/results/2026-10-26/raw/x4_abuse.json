@@ -1,0 +1,96 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "/tmp/tok",
+    "ca": "/tmp/ca.pem",
+    "pool": "default",
+    "template": "py",
+    "tag": null,
+    "total": 3000,
+    "concurrency": 64,
+    "rate": null,
+    "hold_secs": 0,
+    "touch": false,
+    "through_refusals": true,
+    "keep": false,
+    "allow_existing": false,
+    "settle_secs": 45.0,
+    "timeout": 60.0,
+    "out": "/tmp/run2/x4_abuse.json"
+  },
+  "ramp_secs": 7.148,
+  "creates": {
+    "attempted": 3000,
+    "placed": 3000,
+    "refused": 0,
+    "failed": 0,
+    "per_sec": 419.68,
+    "latency": {
+      "n": 3000,
+      "min": 0.005998439999530092,
+      "p50": 0.1332593810002436,
+      "p90": 0.22720031379903954,
+      "p99": 0.34604916370080757,
+      "max": 0.5029003509989707,
+      "mean": 0.14134080379231334
+    },
+    "refusal_reasons": [],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 45.0,
+    "up": 406,
+    "pending": 0,
+    "failed": 2594,
+    "gone": 0,
+    "errors": [
+      [
+        "node held it back: 506 MiB free, below its own 512 MiB floor",
+        447
+      ],
+      [
+        "node held it back: 501 MiB free, below its own 512 MiB floor",
+        350
+      ],
+      [
+        "node held it back: 511 MiB free, below its own 512 MiB floor",
+        334
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 3000,
+    "latency": {
+      "n": 3000,
+      "min": 0.009435363001102814,
+      "p50": 0.11162329749822675,
+      "p90": 0.19173304359865137,
+      "p99": 0.2828308659909815,
+      "max": 0.4899803350017464,
+      "mean": 0.1189210833679778
+    }
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 500,
+    "f3": 500,
+    "f5": 500,
+    "f7": 500,
+    "f8": 500,
+    "f9": 500
+  },
+  "end_tiers": {
+    "snapshot": 3000
+  },
+  "samples": [],
+  "control_plane": {
+    "creates_placed": 3000.0,
+    "creates_refused": 0.0,
+    "demotions": 6000.0,
+    "store_lock_wait_p50": 0.00026144518683494185,
+    "store_lock_wait_p99": 0.02516452442159368,
+    "store_lock_held_p99": 0.04116086025690933,
+    "create_route_p99": 0.04320512820512821
+  }
+}

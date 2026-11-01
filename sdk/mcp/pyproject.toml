@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forkd-mcp"
-version = "0.2.1"
-description = "Model Context Protocol server for forkd microVM sandboxes (BRANCH, diff snapshots, prewarm)"
+name = "sandstorm-mcp"
+version = "0.3.0"
+description = "Model Context Protocol server for Sandstorm: gVisor and Firecracker sandboxes across a fleet of nodes"
 readme = "README.md"
 authors = [{name = "Deeplethe", email = "info@deeplethe.com"}]
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
-keywords = ["mcp", "model-context-protocol", "forkd", "sandbox", "ai-agents", "firecracker"]
+keywords = ["mcp", "model-context-protocol", "sandstorm", "sandbox", "ai-agents", "gvisor", "firecracker"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",
@@ -26,12 +26,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/deeplethe/forkd"
-Source = "https://github.com/deeplethe/forkd/tree/main/sdk/mcp"
-Issues = "https://github.com/deeplethe/forkd/issues"
+Homepage = "https://github.com/deeplethe/sandstorm"
+Source = "https://github.com/deeplethe/sandstorm/tree/main/sdk/mcp"
+Issues = "https://github.com/deeplethe/sandstorm/issues"
 
 [project.scripts]
-forkd-mcp = "forkd_mcp.server:main"
+sandstorm-mcp = "sandstorm_mcp.server:main"
 
 [tool.setuptools]
-packages = ["forkd_mcp"]
+packages = ["sandstorm_mcp"]

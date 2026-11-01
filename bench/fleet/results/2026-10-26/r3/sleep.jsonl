@@ -1,0 +1,179 @@
+{"t": 1792999033.201, "kind": "start", "cmd": "sleep", "args": {"cmd": "sleep", "master": "https://10.2.0.11:80", "ca": "ca.pem", "token_file": "tok", "node_addrs": "f3=127.0.0.1", "node": "f3", "out": "out/sleep.jsonl", "template": "app64", "templates": "idle,app16,app64,app256", "count": 14, "ages": "1,3,6,10,14,18,25,35,50,65,80,100,130,170", "sizes": "6,24,60,120,240", "rates": "5,10,20,40", "phase_secs": 180, "zipf": 1.1, "max_inflight": 256, "create_workers": 8, "sample_secs": 5, "settle": 5, "duration": 3600, "runsc_root": "/var/run/sandstorm-runsc", "ready_secs": 900, "keep": false}, "nodes": {"f3": "127.0.0.1"}}
+{"t": 1792999035.442, "kind": "first_request", "id": "sb-c2961509302f339e6454aaacb00a2fff", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0084, "create_to_response_s": 2.2413, "woke_ms": null}
+{"t": 1792999035.753, "kind": "first_request", "id": "sb-2f8ffe2fcd95b163693f3d019b3a3978", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0099, "create_to_response_s": 2.5512, "woke_ms": null}
+{"t": 1792999035.755, "kind": "first_request", "id": "sb-0fbd62824aa0627101a32996fec82a3c", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0199, "create_to_response_s": 2.552, "woke_ms": null}
+{"t": 1792999036.117, "kind": "first_request", "id": "sb-550afd0c974cbcf1cc3dfb1125994cb7", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0107, "create_to_response_s": 2.9144, "woke_ms": null}
+{"t": 1792999036.14, "kind": "first_request", "id": "sb-ec2c02a1da8dfae963698ef1839396fc", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0284, "create_to_response_s": 2.9325, "woke_ms": null}
+{"t": 1792999036.141, "kind": "first_request", "id": "sb-58e83c7b5b8dc9553a7efdccd1951d81", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0207, "create_to_response_s": 2.9374, "woke_ms": null}
+{"t": 1792999036.142, "kind": "first_request", "id": "sb-ca06d66b1ae6a4c526b47c408039aae2", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0205, "create_to_response_s": 2.9357, "woke_ms": null}
+{"t": 1792999036.224, "kind": "first_request", "id": "sb-1136daaaa5471fb3eb0b78fdf0616f6e", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0194, "create_to_response_s": 0.7818, "woke_ms": 3.0}
+{"t": 1792999036.227, "kind": "first_request", "id": "sb-ea33468bb93ec436086809406a8e9bc9", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0147, "create_to_response_s": 3.0221, "woke_ms": null}
+{"t": 1792999036.749, "kind": "first_request", "id": "sb-9feeec3c8e726bcab5bf54eb472d2ffc", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0056, "create_to_response_s": 0.996, "woke_ms": 62.0}
+{"t": 1792999036.759, "kind": "first_request", "id": "sb-a57e8476bc3f0396ae9d05fd8c084a1c", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.009, "create_to_response_s": 1.0036, "woke_ms": null}
+{"t": 1792999037.025, "kind": "first_request", "id": "sb-8a0e9794b6d5391377d911dfa5b60c5c", "node": "f3", "template": "app64", "status": 200, "accepted_s": 0.0065, "create_to_response_s": 0.9084, "woke_ms": null}
+{"t": 1792999216.186, "kind": "never_ready", "id": "sb-abe00dfdd395ab5587f817299bfcec91", "template": "app64"}
+{"t": 1792999216.186, "kind": "never_ready", "id": "sb-d68526c5050b663e5e9c713fecee3408", "template": "app64"}
+{"t": 1792999219.528, "kind": "wake", "id": "sb-550afd0c974cbcf1cc3dfb1125994cb7", "node": "f3", "slept_s": 1.0, "status": 200, "latency_s": 0.0029, "woke_ms": null}
+{"t": 1792999221.528, "kind": "wake", "id": "sb-2f8ffe2fcd95b163693f3d019b3a3978", "node": "f3", "slept_s": 3.0, "status": 200, "latency_s": 0.0032, "woke_ms": null}
+{"t": 1792999224.528, "kind": "wake", "id": "sb-ea33468bb93ec436086809406a8e9bc9", "node": "f3", "slept_s": 6.0, "status": 200, "latency_s": 0.0028, "woke_ms": null}
+{"t": 1792999228.528, "kind": "wake", "id": "sb-ec2c02a1da8dfae963698ef1839396fc", "node": "f3", "slept_s": 10.0, "status": 200, "latency_s": 0.0028, "woke_ms": null}
+{"t": 1792999232.529, "kind": "wake", "id": "sb-8a0e9794b6d5391377d911dfa5b60c5c", "node": "f3", "slept_s": 14.0, "status": 200, "latency_s": 0.0033, "woke_ms": null}
+{"t": 1792999236.621, "kind": "wake", "id": "sb-c2961509302f339e6454aaacb00a2fff", "node": "f3", "slept_s": 18.0, "status": 200, "latency_s": 0.0958, "woke_ms": 8.0}
+{"t": 1792999243.617, "kind": "wake", "id": "sb-58e83c7b5b8dc9553a7efdccd1951d81", "node": "f3", "slept_s": 25.0, "status": 200, "latency_s": 0.0913, "woke_ms": 8.0}
+{"t": 1792999253.618, "kind": "wake", "id": "sb-1136daaaa5471fb3eb0b78fdf0616f6e", "node": "f3", "slept_s": 35.0, "status": 200, "latency_s": 0.0923, "woke_ms": 9.0}
+{"t": 1792999268.621, "kind": "wake", "id": "sb-a57e8476bc3f0396ae9d05fd8c084a1c", "node": "f3", "slept_s": 50.0, "status": 200, "latency_s": 0.0958, "woke_ms": 13.0}
+{"t": 1792999283.757, "kind": "wake", "id": "sb-9feeec3c8e726bcab5bf54eb472d2ffc", "node": "f3", "slept_s": 65.0, "status": 200, "latency_s": 0.2318, "woke_ms": 220.0}
+{"t": 1792999298.748, "kind": "wake", "id": "sb-ca06d66b1ae6a4c526b47c408039aae2", "node": "f3", "slept_s": 80.0, "status": 200, "latency_s": 0.2227, "woke_ms": 210.0}
+{"t": 1792999318.735, "kind": "wake", "id": "sb-0fbd62824aa0627101a32996fec82a3c", "node": "f3", "slept_s": 100.0, "status": 200, "latency_s": 0.2101, "woke_ms": 199.0}
+{"t": 1792999318.736, "kind": "done", "secs": 102.5}
+{"t": 1792999318.759, "kind": "end"}
+{"t": 1792999039.523, "kind": "start", "cmd": "sleep", "args": {"cmd": "sleep", "master": "https://10.2.0.11:80", "ca": "ca.pem", "token_file": "tok", "node_addrs": "f5=127.0.0.1", "node": "f5", "out": "out/sleep.jsonl", "template": "app64", "templates": "idle,app16,app64,app256", "count": 14, "ages": "1,3,6,10,14,18,25,35,50,65,80,100,130,170", "sizes": "6,24,60,120,240", "rates": "5,10,20,40", "phase_secs": 180, "zipf": 1.1, "max_inflight": 256, "create_workers": 8, "sample_secs": 5, "settle": 5, "duration": 3600, "runsc_root": "/var/run/sandstorm-runsc", "ready_secs": 900, "keep": false}, "nodes": {"f5": "127.0.0.1"}}
+{"t": 1792999041.472, "kind": "first_request", "id": "sb-c16ce6b017f8f960b0e59b6451f5ebe7", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0083, "create_to_response_s": 1.9478, "woke_ms": null}
+{"t": 1792999041.498, "kind": "first_request", "id": "sb-4d55aa663c4e3a4574a1fdd6640149a4", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0097, "create_to_response_s": 1.9721, "woke_ms": null}
+{"t": 1792999041.514, "kind": "first_request", "id": "sb-b684c1792845200d29b51c08be8a94b3", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0117, "create_to_response_s": 1.9863, "woke_ms": 5.0}
+{"t": 1792999041.529, "kind": "first_request", "id": "sb-36f307f437fd257246adb60e0086eede", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0131, "create_to_response_s": 2.0052, "woke_ms": null}
+{"t": 1792999041.556, "kind": "first_request", "id": "sb-44393bd41a47576cfb7def7a8de5aa30", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0165, "create_to_response_s": 2.0287, "woke_ms": null}
+{"t": 1792999041.689, "kind": "first_request", "id": "sb-1b84066008b327e353ee266ded6ed29f", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0097, "create_to_response_s": 2.1625, "woke_ms": null}
+{"t": 1792999041.691, "kind": "first_request", "id": "sb-32be782cfa9192e2c9efc8114c53b2ae", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.009, "create_to_response_s": 2.1661, "woke_ms": null}
+{"t": 1792999042.536, "kind": "first_request", "id": "sb-edb49bb035cf55350a6d40061cb2b0e4", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0178, "create_to_response_s": 3.0077, "woke_ms": 8.0}
+{"t": 1792999042.537, "kind": "first_request", "id": "sb-0a6f571f184e2a28ecd2738d6f8050c1", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0217, "create_to_response_s": 1.0642, "woke_ms": null}
+{"t": 1792999042.614, "kind": "first_request", "id": "sb-56a13462f6d5a9fd87bc8d411697cffb", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.013, "create_to_response_s": 1.1157, "woke_ms": null}
+{"t": 1792999042.697, "kind": "first_request", "id": "sb-1e083f58a4eb72f7d6000798524baf33", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0098, "create_to_response_s": 1.1825, "woke_ms": null}
+{"t": 1792999042.795, "kind": "first_request", "id": "sb-e254bdaaec619cf2f97552b9a99a9be4", "node": "f5", "template": "app64", "status": 200, "accepted_s": 0.0106, "create_to_response_s": 1.2661, "woke_ms": null}
+{"t": 1792999221.741, "kind": "never_ready", "id": "sb-ed14ff46dee2c0e73a499f4843cecf68", "template": "app64"}
+{"t": 1792999221.787, "kind": "never_ready", "id": "sb-9a168f1d26b534e7f7115b8af55e4728", "template": "app64"}
+{"t": 1792999225.036, "kind": "wake", "id": "sb-32be782cfa9192e2c9efc8114c53b2ae", "node": "f5", "slept_s": 1.0, "status": 200, "latency_s": 0.0027, "woke_ms": null}
+{"t": 1792999227.037, "kind": "wake", "id": "sb-c16ce6b017f8f960b0e59b6451f5ebe7", "node": "f5", "slept_s": 3.0, "status": 200, "latency_s": 0.0041, "woke_ms": null}
+{"t": 1792999230.038, "kind": "wake", "id": "sb-edb49bb035cf55350a6d40061cb2b0e4", "node": "f5", "slept_s": 6.0, "status": 200, "latency_s": 0.0048, "woke_ms": null}
+{"t": 1792999234.036, "kind": "wake", "id": "sb-1b84066008b327e353ee266ded6ed29f", "node": "f5", "slept_s": 10.0, "status": 200, "latency_s": 0.0029, "woke_ms": null}
+{"t": 1792999238.036, "kind": "wake", "id": "sb-36f307f437fd257246adb60e0086eede", "node": "f5", "slept_s": 14.0, "status": 200, "latency_s": 0.003, "woke_ms": null}
+{"t": 1792999242.036, "kind": "wake", "id": "sb-4d55aa663c4e3a4574a1fdd6640149a4", "node": "f5", "slept_s": 18.0, "status": 200, "latency_s": 0.0032, "woke_ms": null}
+{"t": 1792999249.13, "kind": "wake", "id": "sb-44393bd41a47576cfb7def7a8de5aa30", "node": "f5", "slept_s": 25.0, "status": 200, "latency_s": 0.0968, "woke_ms": 13.0}
+{"t": 1792999259.127, "kind": "wake", "id": "sb-b684c1792845200d29b51c08be8a94b3", "node": "f5", "slept_s": 35.0, "status": 200, "latency_s": 0.0944, "woke_ms": 8.0}
+{"t": 1792999274.129, "kind": "wake", "id": "sb-1e083f58a4eb72f7d6000798524baf33", "node": "f5", "slept_s": 50.0, "status": 200, "latency_s": 0.0957, "woke_ms": 9.0}
+{"t": 1792999289.131, "kind": "wake", "id": "sb-56a13462f6d5a9fd87bc8d411697cffb", "node": "f5", "slept_s": 65.0, "status": 200, "latency_s": 0.0978, "woke_ms": 12.0}
+{"t": 1792999304.235, "kind": "wake", "id": "sb-e254bdaaec619cf2f97552b9a99a9be4", "node": "f5", "slept_s": 80.0, "status": 200, "latency_s": 0.2019, "woke_ms": 188.0}
+{"t": 1792999324.26, "kind": "wake", "id": "sb-0a6f571f184e2a28ecd2738d6f8050c1", "node": "f5", "slept_s": 100.0, "status": 200, "latency_s": 0.2265, "woke_ms": 213.0}
+{"t": 1792999324.26, "kind": "done", "secs": 102.5}
+{"t": 1792999324.281, "kind": "end"}
+{"t": 1792999031.574, "kind": "start", "cmd": "sleep", "args": {"cmd": "sleep", "master": "https://10.2.0.11:80", "ca": "ca.pem", "token_file": "tok", "node_addrs": "f7=127.0.0.1", "node": "f7", "out": "out/sleep.jsonl", "template": "app64", "templates": "idle,app16,app64,app256", "count": 14, "ages": "1,3,6,10,14,18,25,35,50,65,80,100,130,170", "sizes": "6,24,60,120,240", "rates": "5,10,20,40", "phase_secs": 180, "zipf": 1.1, "max_inflight": 256, "create_workers": 8, "sample_secs": 5, "settle": 5, "duration": 3600, "runsc_root": "/var/run/sandstorm-runsc", "ready_secs": 900, "keep": false}, "nodes": {"f7": "127.0.0.1"}}
+{"t": 1792999033.963, "kind": "first_request", "id": "sb-2baf8228bcee6defd8a0aa4796dd29ab", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0168, "create_to_response_s": 2.3886, "woke_ms": null}
+{"t": 1792999034.379, "kind": "first_request", "id": "sb-a6cc07dc18652c23f6d85d19464504f4", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.018, "create_to_response_s": 2.8049, "woke_ms": null}
+{"t": 1792999034.419, "kind": "first_request", "id": "sb-e0eb19ea397aba3f1205732ca6cae668", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0097, "create_to_response_s": 2.8409, "woke_ms": null}
+{"t": 1792999034.42, "kind": "first_request", "id": "sb-c8665cb6fd73dad32dcbec1d04d9490d", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0127, "create_to_response_s": 2.8431, "woke_ms": null}
+{"t": 1792999034.421, "kind": "first_request", "id": "sb-e9e07a453c8fb247244f0bf163322b6c", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0125, "create_to_response_s": 2.8451, "woke_ms": null}
+{"t": 1792999034.422, "kind": "first_request", "id": "sb-bda0d955878e16c78c1f5a0dc81f91cf", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0105, "create_to_response_s": 2.8434, "woke_ms": null}
+{"t": 1792999034.423, "kind": "first_request", "id": "sb-80bdbf2b38daafaf651993c548978d1d", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0085, "create_to_response_s": 2.8478, "woke_ms": null}
+{"t": 1792999034.717, "kind": "first_request", "id": "sb-046c32a60a9b8075b78d5749c042f2b3", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0195, "create_to_response_s": 3.1381, "woke_ms": 18.0}
+{"t": 1792999034.809, "kind": "first_request", "id": "sb-064a7463c34f1104d22813088e42b7d7", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0062, "create_to_response_s": 0.846, "woke_ms": 76.0}
+{"t": 1792999035.182, "kind": "first_request", "id": "sb-063671b1ddfda9fd2f76cf79100f4d52", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0511, "create_to_response_s": 0.8025, "woke_ms": 24.0}
+{"t": 1792999035.585, "kind": "first_request", "id": "sb-0f7dd547658b4b66ab0753a5f7a15ea8", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0145, "create_to_response_s": 1.1641, "woke_ms": null}
+{"t": 1792999035.626, "kind": "first_request", "id": "sb-2616df0c2d5c1261196d3536c5b0eef3", "node": "f7", "template": "app64", "status": 200, "accepted_s": 0.0161, "create_to_response_s": 1.2062, "woke_ms": null}
+{"t": 1792999214.534, "kind": "never_ready", "id": "sb-eb14cd93609c8a167126ccf543677582", "template": "app64"}
+{"t": 1792999214.534, "kind": "never_ready", "id": "sb-ddff8d2f6312bdc83d2b176d0ab04dfa", "template": "app64"}
+{"t": 1792999217.739, "kind": "wake", "id": "sb-2baf8228bcee6defd8a0aa4796dd29ab", "node": "f7", "slept_s": 1.0, "status": 200, "latency_s": 0.0031, "woke_ms": null}
+{"t": 1792999219.74, "kind": "wake", "id": "sb-063671b1ddfda9fd2f76cf79100f4d52", "node": "f7", "slept_s": 3.0, "status": 200, "latency_s": 0.0035, "woke_ms": null}
+{"t": 1792999222.74, "kind": "wake", "id": "sb-064a7463c34f1104d22813088e42b7d7", "node": "f7", "slept_s": 6.0, "status": 200, "latency_s": 0.0035, "woke_ms": null}
+{"t": 1792999226.74, "kind": "wake", "id": "sb-80bdbf2b38daafaf651993c548978d1d", "node": "f7", "slept_s": 10.0, "status": 200, "latency_s": 0.0034, "woke_ms": null}
+{"t": 1792999230.74, "kind": "wake", "id": "sb-c8665cb6fd73dad32dcbec1d04d9490d", "node": "f7", "slept_s": 14.0, "status": 200, "latency_s": 0.0036, "woke_ms": null}
+{"t": 1792999234.739, "kind": "wake", "id": "sb-2616df0c2d5c1261196d3536c5b0eef3", "node": "f7", "slept_s": 18.0, "status": 200, "latency_s": 0.0032, "woke_ms": null}
+{"t": 1792999241.828, "kind": "wake", "id": "sb-046c32a60a9b8075b78d5749c042f2b3", "node": "f7", "slept_s": 25.0, "status": 200, "latency_s": 0.0918, "woke_ms": 9.0}
+{"t": 1792999251.831, "kind": "wake", "id": "sb-bda0d955878e16c78c1f5a0dc81f91cf", "node": "f7", "slept_s": 35.0, "status": 200, "latency_s": 0.0947, "woke_ms": 10.0}
+{"t": 1792999266.832, "kind": "wake", "id": "sb-0f7dd547658b4b66ab0753a5f7a15ea8", "node": "f7", "slept_s": 50.0, "status": 200, "latency_s": 0.0961, "woke_ms": 12.0}
+{"t": 1792999281.827, "kind": "wake", "id": "sb-a6cc07dc18652c23f6d85d19464504f4", "node": "f7", "slept_s": 65.0, "status": 200, "latency_s": 0.0909, "woke_ms": 10.0}
+{"t": 1792999296.958, "kind": "wake", "id": "sb-e9e07a453c8fb247244f0bf163322b6c", "node": "f7", "slept_s": 80.0, "status": 200, "latency_s": 0.2222, "woke_ms": 210.0}
+{"t": 1792999316.981, "kind": "wake", "id": "sb-e0eb19ea397aba3f1205732ca6cae668", "node": "f7", "slept_s": 100.0, "status": 200, "latency_s": 0.2445, "woke_ms": 233.0}
+{"t": 1792999316.981, "kind": "done", "secs": 102.4}
+{"t": 1792999317.01, "kind": "end"}
+{"t": 1792999033.189, "kind": "start", "cmd": "sleep", "args": {"cmd": "sleep", "master": "https://10.2.0.11:80", "ca": "ca.pem", "token_file": "tok", "node_addrs": "f8=127.0.0.1", "node": "f8", "out": "out/sleep.jsonl", "template": "app64", "templates": "idle,app16,app64,app256", "count": 14, "ages": "1,3,6,10,14,18,25,35,50,65,80,100,130,170", "sizes": "6,24,60,120,240", "rates": "5,10,20,40", "phase_secs": 180, "zipf": 1.1, "max_inflight": 256, "create_workers": 8, "sample_secs": 5, "settle": 5, "duration": 3600, "runsc_root": "/var/run/sandstorm-runsc", "ready_secs": 900, "keep": false}, "nodes": {"f8": "127.0.0.1"}}
+{"t": 1792999035.031, "kind": "first_request", "id": "sb-577a1430b4260de6d7891fff5d72505d", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0093, "create_to_response_s": 1.8414, "woke_ms": null}
+{"t": 1792999035.362, "kind": "first_request", "id": "sb-2977382cc88026ffc44643da0d13d9c2", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.014, "create_to_response_s": 2.1667, "woke_ms": null}
+{"t": 1792999035.365, "kind": "first_request", "id": "sb-0df5e92ee60a40e56b493341eca1d65c", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.017, "create_to_response_s": 2.1712, "woke_ms": null}
+{"t": 1792999035.37, "kind": "first_request", "id": "sb-b4162c1e50ce9f1aec6d9c51135b7ac3", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0099, "create_to_response_s": 2.1788, "woke_ms": null}
+{"t": 1792999035.581, "kind": "first_request", "id": "sb-2e314da9dc595db0b6e07df7fddb163f", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0116, "create_to_response_s": 2.386, "woke_ms": null}
+{"t": 1792999035.581, "kind": "first_request", "id": "sb-b90b7c7afc3f993c082016f3c9dd2c44", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0123, "create_to_response_s": 2.3896, "woke_ms": null}
+{"t": 1792999035.583, "kind": "first_request", "id": "sb-df5244aed1f7f8d9a03818e8740eab1d", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0152, "create_to_response_s": 2.3925, "woke_ms": null}
+{"t": 1792999035.583, "kind": "first_request", "id": "sb-bb995084b30c6090d669bd0d6c475c95", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0119, "create_to_response_s": 2.3902, "woke_ms": null}
+{"t": 1792999036.151, "kind": "first_request", "id": "sb-90b693e7fd88b66a4ca1ee2713996b9c", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.009, "create_to_response_s": 1.1193, "woke_ms": 2.0}
+{"t": 1792999036.151, "kind": "first_request", "id": "sb-6f01e3f699a39a633387c17346929d49", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0088, "create_to_response_s": 0.7889, "woke_ms": null}
+{"t": 1792999036.316, "kind": "first_request", "id": "sb-abd8088f134b16a99f30c8309607d49c", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.008, "create_to_response_s": 0.9506, "woke_ms": null}
+{"t": 1792999036.56, "kind": "first_request", "id": "sb-4ced715f9f7bc451a5e5b16dab42f99c", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0092, "create_to_response_s": 1.1905, "woke_ms": null}
+{"t": 1792999036.675, "kind": "first_request", "id": "sb-acf8ab7ef7c28f7cf73e1e684d9f0a58", "node": "f8", "template": "app64", "status": 200, "accepted_s": 0.0088, "create_to_response_s": 1.0942, "woke_ms": null}
+{"t": 1792999215.622, "kind": "never_ready", "id": "sb-87e657a115f932a1b25301fc1e41cb3a", "template": "app64"}
+{"t": 1792999218.577, "kind": "wake", "id": "sb-b90b7c7afc3f993c082016f3c9dd2c44", "node": "f8", "slept_s": 1.0, "status": 200, "latency_s": 0.0031, "woke_ms": null}
+{"t": 1792999220.577, "kind": "wake", "id": "sb-4ced715f9f7bc451a5e5b16dab42f99c", "node": "f8", "slept_s": 3.0, "status": 200, "latency_s": 0.0035, "woke_ms": null}
+{"t": 1792999223.577, "kind": "wake", "id": "sb-0df5e92ee60a40e56b493341eca1d65c", "node": "f8", "slept_s": 6.0, "status": 200, "latency_s": 0.0031, "woke_ms": null}
+{"t": 1792999227.577, "kind": "wake", "id": "sb-b4162c1e50ce9f1aec6d9c51135b7ac3", "node": "f8", "slept_s": 10.0, "status": 200, "latency_s": 0.0034, "woke_ms": null}
+{"t": 1792999231.577, "kind": "wake", "id": "sb-acf8ab7ef7c28f7cf73e1e684d9f0a58", "node": "f8", "slept_s": 14.0, "status": 200, "latency_s": 0.0035, "woke_ms": null}
+{"t": 1792999235.661, "kind": "wake", "id": "sb-df5244aed1f7f8d9a03818e8740eab1d", "node": "f8", "slept_s": 18.0, "status": 200, "latency_s": 0.0873, "woke_ms": 5.0}
+{"t": 1792999242.663, "kind": "wake", "id": "sb-abd8088f134b16a99f30c8309607d49c", "node": "f8", "slept_s": 25.0, "status": 200, "latency_s": 0.0894, "woke_ms": 8.0}
+{"t": 1792999252.691, "kind": "wake", "id": "sb-6f01e3f699a39a633387c17346929d49", "node": "f8", "slept_s": 35.0, "status": 200, "latency_s": 0.1174, "woke_ms": 11.0}
+{"t": 1792999267.673, "kind": "wake", "id": "sb-577a1430b4260de6d7891fff5d72505d", "node": "f8", "slept_s": 50.0, "status": 200, "latency_s": 0.0992, "woke_ms": 12.0}
+{"t": 1792999282.775, "kind": "wake", "id": "sb-2e314da9dc595db0b6e07df7fddb163f", "node": "f8", "slept_s": 65.0, "status": 200, "latency_s": 0.201, "woke_ms": 191.0}
+{"t": 1792999297.78, "kind": "wake", "id": "sb-90b693e7fd88b66a4ca1ee2713996b9c", "node": "f8", "slept_s": 80.0, "status": 200, "latency_s": 0.2065, "woke_ms": 196.0}
+{"t": 1792999317.794, "kind": "wake", "id": "sb-bb995084b30c6090d669bd0d6c475c95", "node": "f8", "slept_s": 100.0, "status": 200, "latency_s": 0.2202, "woke_ms": 209.0}
+{"t": 1792999347.749, "kind": "wake", "id": "sb-2977382cc88026ffc44643da0d13d9c2", "node": "f8", "slept_s": 130.0, "status": 200, "latency_s": 0.1756, "woke_ms": 166.0}
+{"t": 1792999347.75, "kind": "done", "secs": 132.1}
+{"t": 1792999347.769, "kind": "end"}
+{"t": 1792999031.753, "kind": "start", "cmd": "sleep", "args": {"cmd": "sleep", "master": "https://10.2.0.11:80", "ca": "ca.pem", "token_file": "tok", "node_addrs": "f9=127.0.0.1", "node": "f9", "out": "out/sleep.jsonl", "template": "app64", "templates": "idle,app16,app64,app256", "count": 14, "ages": "1,3,6,10,14,18,25,35,50,65,80,100,130,170", "sizes": "6,24,60,120,240", "rates": "5,10,20,40", "phase_secs": 180, "zipf": 1.1, "max_inflight": 256, "create_workers": 8, "sample_secs": 5, "settle": 5, "duration": 3600, "runsc_root": "/var/run/sandstorm-runsc", "ready_secs": 900, "keep": false}, "nodes": {"f9": "127.0.0.1"}}
+{"t": 1792999034.164, "kind": "first_request", "id": "sb-252f2e936c4882001ff13951baad9167", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0075, "create_to_response_s": 2.4087, "woke_ms": null}
+{"t": 1792999034.225, "kind": "first_request", "id": "sb-f833c716fd4cd5c8ed055015b76bb283", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0101, "create_to_response_s": 2.4702, "woke_ms": null}
+{"t": 1792999034.543, "kind": "first_request", "id": "sb-95ba00e11bea21db81f2d88e63f4b34e", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0121, "create_to_response_s": 2.7814, "woke_ms": null}
+{"t": 1792999034.543, "kind": "first_request", "id": "sb-63f4acff97d5fc9cda2114f8655973fa", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0102, "create_to_response_s": 2.7892, "woke_ms": null}
+{"t": 1792999034.551, "kind": "first_request", "id": "sb-2ae8f54be16bd3a2adce3af10bb4a7b0", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0097, "create_to_response_s": 2.7959, "woke_ms": null}
+{"t": 1792999034.564, "kind": "first_request", "id": "sb-1855bbe20ea75c86b665c8a5a19d91d6", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.012, "create_to_response_s": 2.8066, "woke_ms": null}
+{"t": 1792999034.564, "kind": "first_request", "id": "sb-4019f54a17219845ef43e0e8e48753f4", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0165, "create_to_response_s": 2.8057, "woke_ms": null}
+{"t": 1792999034.564, "kind": "first_request", "id": "sb-20f7f43dd77870ed459e9b0917794f60", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0112, "create_to_response_s": 2.8076, "woke_ms": null}
+{"t": 1792999035.509, "kind": "first_request", "id": "sb-cca310c763e30e786b55cbfab3f648da", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0185, "create_to_response_s": 1.2844, "woke_ms": 29.0}
+{"t": 1792999035.516, "kind": "first_request", "id": "sb-966e63b0feb795cdcce91b1a4118f620", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0811, "create_to_response_s": 1.3527, "woke_ms": null}
+{"t": 1792999035.633, "kind": "first_request", "id": "sb-d0cbfdf7f26f20b4852ce4209cfdcebe", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0057, "create_to_response_s": 1.0897, "woke_ms": null}
+{"t": 1792999035.864, "kind": "first_request", "id": "sb-ca328c6875aad08a49e5d25a289b1315", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0062, "create_to_response_s": 1.3201, "woke_ms": null}
+{"t": 1792999050.954, "kind": "first_request", "id": "sb-1c4bd8a353d34526d88638cb84849bb9", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0233, "create_to_response_s": 16.4023, "woke_ms": 11.0}
+{"t": 1792999051.742, "kind": "first_request", "id": "sb-89b377ed782146bac385b701bd4a6042", "node": "f9", "template": "app64", "status": 200, "accepted_s": 0.0114, "create_to_response_s": 17.1774, "woke_ms": 30.0}
+{"t": 1792999053.439, "kind": "wake", "id": "sb-1c4bd8a353d34526d88638cb84849bb9", "node": "f9", "slept_s": 1.0, "status": 200, "latency_s": 0.0035, "woke_ms": null}
+{"t": 1792999055.44, "kind": "wake", "id": "sb-1855bbe20ea75c86b665c8a5a19d91d6", "node": "f9", "slept_s": 3.0, "status": 200, "latency_s": 0.0041, "woke_ms": null}
+{"t": 1792999058.44, "kind": "wake", "id": "sb-966e63b0feb795cdcce91b1a4118f620", "node": "f9", "slept_s": 6.0, "status": 200, "latency_s": 0.0046, "woke_ms": null}
+{"t": 1792999062.443, "kind": "wake", "id": "sb-63f4acff97d5fc9cda2114f8655973fa", "node": "f9", "slept_s": 10.0, "status": 200, "latency_s": 0.0074, "woke_ms": null}
+{"t": 1792999066.442, "kind": "wake", "id": "sb-252f2e936c4882001ff13951baad9167", "node": "f9", "slept_s": 14.0, "status": 200, "latency_s": 0.0064, "woke_ms": null}
+{"t": 1792999070.467, "kind": "wake", "id": "sb-89b377ed782146bac385b701bd4a6042", "node": "f9", "slept_s": 18.0, "status": 200, "latency_s": 0.0315, "woke_ms": 21.0}
+{"t": 1792999077.535, "kind": "wake", "id": "sb-d0cbfdf7f26f20b4852ce4209cfdcebe", "node": "f9", "slept_s": 25.0, "status": 200, "latency_s": 0.0995, "woke_ms": 14.0}
+{"t": 1792999087.532, "kind": "wake", "id": "sb-cca310c763e30e786b55cbfab3f648da", "node": "f9", "slept_s": 35.0, "status": 200, "latency_s": 0.0966, "woke_ms": 13.0}
+{"t": 1792999102.541, "kind": "wake", "id": "sb-20f7f43dd77870ed459e9b0917794f60", "node": "f9", "slept_s": 50.0, "status": 200, "latency_s": 0.1049, "woke_ms": 13.0}
+{"t": 1792999117.68, "kind": "wake", "id": "sb-f833c716fd4cd5c8ed055015b76bb283", "node": "f9", "slept_s": 65.0, "status": 200, "latency_s": 0.2442, "woke_ms": 230.0}
+{"t": 1792999132.649, "kind": "wake", "id": "sb-95ba00e11bea21db81f2d88e63f4b34e", "node": "f9", "slept_s": 80.0, "status": 200, "latency_s": 0.213, "woke_ms": 200.0}
+{"t": 1792999152.664, "kind": "wake", "id": "sb-2ae8f54be16bd3a2adce3af10bb4a7b0", "node": "f9", "slept_s": 100.0, "status": 200, "latency_s": 0.2284, "woke_ms": 217.0}
+{"t": 1792999182.649, "kind": "wake", "id": "sb-4019f54a17219845ef43e0e8e48753f4", "node": "f9", "slept_s": 130.0, "status": 200, "latency_s": 0.2134, "woke_ms": 201.0}
+{"t": 1792999222.673, "kind": "wake", "id": "sb-ca328c6875aad08a49e5d25a289b1315", "node": "f9", "slept_s": 170.0, "status": 200, "latency_s": 0.2374, "woke_ms": 226.0}
+{"t": 1792999222.674, "kind": "done", "secs": 170.9}
+{"t": 1792999222.703, "kind": "end"}
+{"t": 1792999032.181, "kind": "start", "cmd": "sleep", "args": {"cmd": "sleep", "master": "https://10.2.0.11:80", "ca": "ca.pem", "token_file": "tok", "node_addrs": "f10=127.0.0.1", "node": "f10", "out": "out/sleep.jsonl", "template": "app64", "templates": "idle,app16,app64,app256", "count": 14, "ages": "1,3,6,10,14,18,25,35,50,65,80,100,130,170", "sizes": "6,24,60,120,240", "rates": "5,10,20,40", "phase_secs": 180, "zipf": 1.1, "max_inflight": 256, "create_workers": 8, "sample_secs": 5, "settle": 5, "duration": 3600, "runsc_root": "/var/run/sandstorm-runsc", "ready_secs": 900, "keep": false}, "nodes": {"f10": "127.0.0.1"}}
+{"t": 1792999034.028, "kind": "first_request", "id": "sb-acb74d9e94929090b955797d8b30c6c6", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0053, "create_to_response_s": 1.8467, "woke_ms": null}
+{"t": 1792999034.312, "kind": "first_request", "id": "sb-1eea46aea39699b13441ad1c05a411e7", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0083, "create_to_response_s": 2.1299, "woke_ms": null}
+{"t": 1792999034.314, "kind": "first_request", "id": "sb-3bd4e1e5ab526ae775cb4496f3506982", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0099, "create_to_response_s": 2.1295, "woke_ms": null}
+{"t": 1792999034.906, "kind": "first_request", "id": "sb-5c79749ed2bba9e01b5e7e20c79ca888", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0107, "create_to_response_s": 2.7239, "woke_ms": null}
+{"t": 1792999034.908, "kind": "first_request", "id": "sb-bf81e1c7551d388315b81c2e84ffc128", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0057, "create_to_response_s": 2.7235, "woke_ms": null}
+{"t": 1792999034.914, "kind": "first_request", "id": "sb-6687f29c0bf89fce89c286cc05c4d980", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0156, "create_to_response_s": 2.7222, "woke_ms": null}
+{"t": 1792999034.918, "kind": "first_request", "id": "sb-6139de9ee55a41a301ba25974d36635d", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0125, "create_to_response_s": 2.7348, "woke_ms": null}
+{"t": 1792999034.93, "kind": "first_request", "id": "sb-c8512ae472c88685d2263dc89f6b555c", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0031, "create_to_response_s": 0.9019, "woke_ms": 7.0}
+{"t": 1792999034.931, "kind": "first_request", "id": "sb-14ff9845139cf9e6dc2ec19aba4f2bab", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0218, "create_to_response_s": 2.7452, "woke_ms": 7.0}
+{"t": 1792999035.103, "kind": "first_request", "id": "sb-66ba0d220062b47b5911a0a33c7b108d", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0058, "create_to_response_s": 0.7902, "woke_ms": null}
+{"t": 1792999035.111, "kind": "first_request", "id": "sb-9fd231f1a386fcdae8802fb331ffa814", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0038, "create_to_response_s": 0.7976, "woke_ms": null}
+{"t": 1792999035.397, "kind": "first_request", "id": "sb-4f467473f9c45aa7d3c0966827800c20", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0073, "create_to_response_s": 0.4908, "woke_ms": null}
+{"t": 1792999050.863, "kind": "first_request", "id": "sb-cab9c9a65bf524083784100e662a37bd", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0025, "create_to_response_s": 15.9492, "woke_ms": 22.0}
+{"t": 1792999050.904, "kind": "first_request", "id": "sb-3911ef80c13d059f4b43e4fe5bd7302f", "node": "f10", "template": "app64", "status": 200, "accepted_s": 0.0103, "create_to_response_s": 15.9961, "woke_ms": 21.0}
+{"t": 1792999052.608, "kind": "wake", "id": "sb-3911ef80c13d059f4b43e4fe5bd7302f", "node": "f10", "slept_s": 1.0, "status": 200, "latency_s": 0.0034, "woke_ms": null}
+{"t": 1792999054.608, "kind": "wake", "id": "sb-1eea46aea39699b13441ad1c05a411e7", "node": "f10", "slept_s": 3.0, "status": 200, "latency_s": 0.0035, "woke_ms": null}
+{"t": 1792999057.608, "kind": "wake", "id": "sb-c8512ae472c88685d2263dc89f6b555c", "node": "f10", "slept_s": 6.0, "status": 200, "latency_s": 0.0035, "woke_ms": null}
+{"t": 1792999061.611, "kind": "wake", "id": "sb-acb74d9e94929090b955797d8b30c6c6", "node": "f10", "slept_s": 10.0, "status": 200, "latency_s": 0.0068, "woke_ms": null}
+{"t": 1792999065.608, "kind": "wake", "id": "sb-cab9c9a65bf524083784100e662a37bd", "node": "f10", "slept_s": 14.0, "status": 200, "latency_s": 0.0037, "woke_ms": null}
+{"t": 1792999069.737, "kind": "wake", "id": "sb-6139de9ee55a41a301ba25974d36635d", "node": "f10", "slept_s": 18.0, "status": 200, "latency_s": 0.1324, "woke_ms": 15.0}
+{"t": 1792999076.694, "kind": "wake", "id": "sb-5c79749ed2bba9e01b5e7e20c79ca888", "node": "f10", "slept_s": 25.0, "status": 200, "latency_s": 0.0896, "woke_ms": 9.0}
+{"t": 1792999086.698, "kind": "wake", "id": "sb-6687f29c0bf89fce89c286cc05c4d980", "node": "f10", "slept_s": 35.0, "status": 200, "latency_s": 0.0938, "woke_ms": 8.0}
+{"t": 1792999101.694, "kind": "wake", "id": "sb-66ba0d220062b47b5911a0a33c7b108d", "node": "f10", "slept_s": 50.0, "status": 200, "latency_s": 0.0896, "woke_ms": 11.0}
+{"t": 1792999116.818, "kind": "wake", "id": "sb-14ff9845139cf9e6dc2ec19aba4f2bab", "node": "f10", "slept_s": 65.0, "status": 200, "latency_s": 0.2133, "woke_ms": 203.0}
+{"t": 1792999131.783, "kind": "wake", "id": "sb-4f467473f9c45aa7d3c0966827800c20", "node": "f10", "slept_s": 80.0, "status": 200, "latency_s": 0.1785, "woke_ms": 167.0}
+{"t": 1792999151.809, "kind": "wake", "id": "sb-3bd4e1e5ab526ae775cb4496f3506982", "node": "f10", "slept_s": 100.0, "status": 200, "latency_s": 0.2043, "woke_ms": 189.0}
+{"t": 1792999181.819, "kind": "wake", "id": "sb-bf81e1c7551d388315b81c2e84ffc128", "node": "f10", "slept_s": 130.0, "status": 200, "latency_s": 0.2143, "woke_ms": 204.0}
+{"t": 1792999221.827, "kind": "wake", "id": "sb-9fd231f1a386fcdae8802fb331ffa814", "node": "f10", "slept_s": 170.0, "status": 200, "latency_s": 0.2229, "woke_ms": 211.0}
+{"t": 1792999221.828, "kind": "done", "secs": 170.9}
+{"t": 1792999221.852, "kind": "end"}

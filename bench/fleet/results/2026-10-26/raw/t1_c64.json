@@ -1,0 +1,83 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "/tmp/tok",
+    "ca": "/tmp/ca.pem",
+    "pool": "default",
+    "template": "py",
+    "tag": null,
+    "total": 200,
+    "concurrency": 64,
+    "rate": null,
+    "hold_secs": 0,
+    "touch": false,
+    "through_refusals": false,
+    "keep": false,
+    "allow_existing": false,
+    "settle_secs": 20.0,
+    "timeout": 60.0,
+    "out": "/tmp/run/t1_c64.json"
+  },
+  "ramp_secs": 0.45,
+  "creates": {
+    "attempted": 200,
+    "placed": 200,
+    "refused": 0,
+    "failed": 0,
+    "per_sec": 444.21,
+    "latency": {
+      "n": 200,
+      "min": 0.004578232001222204,
+      "p50": 0.04660615549983049,
+      "p90": 0.08253559070071788,
+      "p99": 0.11936019569067864,
+      "max": 0.1347544630007178,
+      "mean": 0.05005816470013087
+    },
+    "refusal_reasons": [],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 20.0,
+    "up": 200,
+    "pending": 0,
+    "failed": 0,
+    "gone": 0,
+    "errors": []
+  },
+  "deletes": {
+    "n": 200,
+    "latency": {
+      "n": 200,
+      "min": 0.0050229000007675495,
+      "p50": 0.043936653000855586,
+      "p90": 0.0711886405973928,
+      "p99": 0.10455405146160046,
+      "max": 0.10947120199853089,
+      "mean": 0.04452170074999231
+    }
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 34,
+    "f5": 33,
+    "f7": 33,
+    "f3": 34,
+    "f8": 33,
+    "f9": 33
+  },
+  "end_tiers": {
+    "hot": 200
+  },
+  "samples": [],
+  "control_plane": {
+    "creates_placed": 200.0,
+    "creates_refused": 0.0,
+    "demotions": 0.0,
+    "store_lock_wait_p50": 0.00025023251212031265,
+    "store_lock_wait_p99": 0.0004954603739982191,
+    "store_lock_held_p99": 0.0006150208768267248,
+    "create_route_p99": 0.023631818181818188
+  }
+}

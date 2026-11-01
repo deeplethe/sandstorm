@@ -1,0 +1,46 @@
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 1, "start_to_answer_s": 0.0709}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 2, "start_to_answer_s": 0.0616}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 3, "start_to_answer_s": 0.0821}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 4, "start_to_answer_s": 0.0761}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 5, "start_to_answer_s": 0.0755}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 6, "start_to_answer_s": 0.0821}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 7, "start_to_answer_s": 0.0761}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 8, "start_to_answer_s": 0.0819}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 9, "start_to_answer_s": 0.0876}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 10, "start_to_answer_s": 0.0749}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 11, "start_to_answer_s": 0.083}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 12, "start_to_answer_s": 0.0846}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 13, "start_to_answer_s": 0.0791}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 14, "start_to_answer_s": 0.0634}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 15, "start_to_answer_s": 0.0835}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 16, "start_to_answer_s": 0.0633}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 17, "start_to_answer_s": 0.0612}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 18, "start_to_answer_s": 0.0711}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 19, "start_to_answer_s": 0.0961}
+{"runtime": "cubesandbox", "app": "web", "kind": "start", "n": 20, "start_to_answer_s": 0.0828}
+{"runtime": "cubesandbox", "app": "web", "kind": "summary", "avail_mib_before": 25076, "start": {"p50_ms": 77.6, "min_ms": 61.2, "p90_ms": 87.6, "failed": 0}}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 1, "start_to_answer_s": 0.1194}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 2, "start_to_answer_s": 0.1373}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 3, "start_to_answer_s": 0.1522}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 4, "start_to_answer_s": 0.1108}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 5, "start_to_answer_s": 0.1175}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 6, "start_to_answer_s": 0.1463}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 7, "start_to_answer_s": 0.1439}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 8, "start_to_answer_s": 0.171}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 9, "start_to_answer_s": 0.1115}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 10, "start_to_answer_s": 0.1518}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 11, "start_to_answer_s": 0.1223}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 12, "start_to_answer_s": 0.1318}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 13, "start_to_answer_s": 0.1146}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 14, "start_to_answer_s": 0.1408}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 15, "start_to_answer_s": 0.1283}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 16, "start_to_answer_s": 0.1267}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 17, "start_to_answer_s": 0.1226}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 18, "start_to_answer_s": 0.1206}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 19, "start_to_answer_s": 0.1306}
+{"runtime": "cubesandbox", "app": "app64", "kind": "start", "n": 20, "start_to_answer_s": 0.1294}
+{"runtime": "cubesandbox", "app": "app64", "kind": "summary", "avail_mib_before": 25078, "start": {"p50_ms": 128.8, "min_ms": 110.8, "p90_ms": 152.2, "failed": 0}}
+{"runtime": "cubesandbox-cold", "app": "web", "kind": "summary", "source": "cubemastercli multirun, the template's create request without its appsnapshot annotations, probe every 5 ms; p50 of 20 after one", "failed": 0, "start": {"p50_ms": 827.5, "min_ms": 735, "max_ms": 1037, "n": 20, "probe_p50_ms": 127.0}}
+{"runtime": "cubesandbox-cold", "app": "app64", "kind": "summary", "source": "cubemastercli multirun, the template's create request without its appsnapshot annotations, probe every 5 ms; p50 of 20 after one", "failed": 0, "start": {"p50_ms": 998.5, "min_ms": 886, "max_ms": 1273, "n": 20, "probe_p50_ms": 302.0}}
+{"runtime": "cubesandbox-cold", "app": "web", "kind": "summary", "avail_mib_before": 25137, "memory": {"kept": 100, "per_instance_mib": 111.6}}
+{"runtime": "cubesandbox-cold", "app": "app64", "kind": "summary", "avail_mib_before": 25008, "memory": {"kept": 100, "per_instance_mib": 188.3}}

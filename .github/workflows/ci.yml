@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, dev]
 
+# Least privilege: both jobs only check out and test, so the default token
+# -- which can carry write scope -- is more than they need. CodeQL's
+# actions/missing-workflow-permissions flagged every job here.
+permissions:
+  contents: read
+
 jobs:
   rust:
     runs-on: ubuntu-latest
@@ -15,6 +21,22 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # The console is a TypeScript + React app (web/console) that build.rs
+      # embeds into sandstormd. Built first, so every binary below carries it;
+      # this also type-checks it.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: web/console/package-lock.json
+      - name: build the console
+        working-directory: web/console
+        run: npm ci && npm run build
+      - name: test the console
+        working-directory: web/console
+        run: npm test
+      - name: test the installer's backend choice
+        run: sh packaging/tests/install_backend.sh
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
@@ -24,31 +46,11 @@ jobs:
       - name: cargo test
         run: cargo test --all
 
-  bench-python:
-    # Pure-stdlib Python tests for bench/pause-window/. No firecracker
-    # or daemon needed — the analyzer runs on synthetic event lists.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - name: analyze.py unit tests
-        working-directory: bench/pause-window
-        run: python -m unittest test_analyze.py -v
-      - name: agent / echo_server syntax
-        working-directory: bench/pause-window
-        run: |
-          python -m py_compile agent.py
-          python -m py_compile echo_server.py
-      - name: run.sh shellcheck-style parse
-        run: bash -n bench/pause-window/run.sh
-
   agent-python:
-    # forkd-agent.py unit + stream tests. forkd-agent runs as PID 1 inside
+    # sandstorm-agent.py unit + stream tests. sandstorm-agent runs as PID 1 inside
     # guest VMs; these exercise the pure-Python protocol logic (container-env
     # PATH handling, BufferedLineReader coalesced-frame handling, stream
-    # lifecycle + process-group descendant cleanup) with no VM/firecracker.
+    # lifecycle + process-group descendant cleanup) with no sandbox runtime.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -62,8 +64,8 @@ jobs:
           python tests/test_agent_stream.py
 
   sdk-python:
-    # SDK unit tests that need no firecracker/daemon — target parsing
-    # and the _send wire protocol against an in-process socket server.
+    # SDK unit tests that need no sandbox runtime/daemon — Sandbox and
+    # Controller against an in-process stand-in for the master.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -91,11 +93,20 @@ jobs:
       # setup-uv stopped publishing floating major tags after v7, so this
       # one is pinned to an exact release while the rest track majors.
       - uses: astral-sh/setup-uv@v9.0.0
-      - name: stdio handshake
-        run: >-
-          uv run --isolated --no-project
-          --with-editable ./sdk/mcp
-          --with anyio
-          --with pytest
-          --with '${{ matrix.mcp }}'
-          pytest -q sdk/mcp/tests/test_stdio.py
+      - name: stdio handshake and unit tests
+        env:
+          MCP: ${{ matrix.mcp }}
+        run: |
+          pins=()
+          # mcp 1.2.0 imports pydantic._internal._typing_extra.eval_type_backport,
+          # which pydantic 2.14.0 (2026-10-08) removed. Hold pydantic back on the
+          # floor leg only, so the tracking leg still surfaces real breakage.
+          if [[ "$MCP" == "mcp==1.2.0" ]]; then
+            pins+=(--with 'pydantic<2.14')
+          fi
+          uv run --isolated --no-project \
+            --with-editable ./sdk/mcp \
+            --with anyio \
+            --with pytest \
+            --with "$MCP" "${pins[@]}" \
+            pytest -q sdk/mcp/tests

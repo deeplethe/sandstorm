@@ -1,0 +1,595 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "/tmp/tok",
+    "ca": "/tmp/ca.pem",
+    "pool": "default",
+    "template": "py",
+    "tag": null,
+    "total": 1800,
+    "concurrency": 6,
+    "rate": 3.0,
+    "hold_secs": 60.0,
+    "touch": false,
+    "through_refusals": true,
+    "keep": true,
+    "allow_existing": false,
+    "settle_secs": 30.0,
+    "timeout": 60.0,
+    "out": "/tmp/run/t3_overcommit.json"
+  },
+  "ramp_secs": 599.9,
+  "creates": {
+    "attempted": 1800,
+    "placed": 1800,
+    "refused": 0,
+    "failed": 0,
+    "per_sec": 3.0,
+    "latency": {
+      "n": 1800,
+      "min": 0.002768808997643646,
+      "p50": 0.0032258475021080812,
+      "p90": 0.0034787538003001827,
+      "p99": 0.009254008120296928,
+      "max": 0.022088804998929845,
+      "mean": 0.003439165157793064
+    },
+    "refusal_reasons": [],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 30.0,
+    "up": 1800,
+    "pending": 0,
+    "failed": 0,
+    "gone": 0,
+    "errors": []
+  },
+  "deletes": {
+    "n": 0,
+    "latency": {}
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 300,
+    "f3": 300,
+    "f5": 300,
+    "f7": 300,
+    "f8": 300,
+    "f9": 300
+  },
+  "end_tiers": {
+    "snapshot": 1800
+  },
+  "samples": [
+    {
+      "t": 630.3,
+      "tiers": {
+        "snapshot": 1764,
+        "frozen": 36
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1304,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1308,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1312,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1307,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1318,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1334,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 635.3,
+      "tiers": {
+        "snapshot": 1779,
+        "frozen": 21
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1347,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1349,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1365,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1335,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1345,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1337,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 640.3,
+      "tiers": {
+        "snapshot": 1794,
+        "frozen": 6
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1376,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1379,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1385,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1378,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1388,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1375,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 645.4,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1403,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1396,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1426,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1390,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 650.4,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1402,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1426,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1390,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 655.4,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1402,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1422,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1391,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 660.4,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1402,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1422,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1391,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 665.5,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1402,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1398,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1399,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1423,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1391,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 670.5,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1402,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1399,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1399,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1423,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1392,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 675.5,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1408,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1400,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1400,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1422,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1395,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1517,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 680.5,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1408,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1400,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1421,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1400,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1426,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1395,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1518,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 685.6,
+      "tiers": {
+        "snapshot": 1800
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1408,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1400,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1419,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1400,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1424,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1394,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f6": {
+          "free_mib": 1518,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    }
+  ],
+  "control_plane": {
+    "creates_placed": 1800.0,
+    "creates_refused": 0.0,
+    "demotions": 3600.0,
+    "store_lock_wait_p50": 0.00026688612533528407,
+    "store_lock_wait_p99": 0.004575986842105268,
+    "store_lock_held_p99": 0.008850183823529425,
+    "create_route_p99": 0.0025
+  }
+}

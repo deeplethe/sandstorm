@@ -1,0 +1,23 @@
+03:19:25 sleep-1
+       118416 pages swapped in
+03:22:21 sleep-2
+       119706 pages swapped in
+03:25:17 sleep-3
+       120323 pages swapped in
+03:28:13 sleep-4
+       120897 pages swapped in
+03:31:10 sizes-1
+       120987 pages swapped in
+03:32:57 herd-1
+       122671 pages swapped in
+03:34:13 sizes-2
+       122672 pages swapped in
+03:36:00 herd-2
+       125391 pages swapped in
+03:37:15 heavy
+       125397 pages swapped in
+03:37:49 mixed20-1
+       144167 pages swapped in
+03:49:24 mixed20-2
+       166061 pages swapped in
+ALLDONE

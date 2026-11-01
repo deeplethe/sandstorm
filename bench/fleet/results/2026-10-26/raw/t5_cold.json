@@ -1,0 +1,82 @@
+[
+ {
+  "accepted_s": 0.0053,
+  "first_exec_s": 0.232
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.271
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.25
+ },
+ {
+  "accepted_s": 0.0102,
+  "first_exec_s": 0.251
+ },
+ {
+  "accepted_s": 0.0037,
+  "first_exec_s": 0.231
+ },
+ {
+  "accepted_s": 0.0035,
+  "first_exec_s": 0.218
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.227
+ },
+ {
+  "accepted_s": 0.0037,
+  "first_exec_s": 0.219
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.24
+ },
+ {
+  "accepted_s": 0.0035,
+  "first_exec_s": 0.237
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.219
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.224
+ },
+ {
+  "accepted_s": 0.0035,
+  "first_exec_s": 0.237
+ },
+ {
+  "accepted_s": 0.0035,
+  "first_exec_s": 0.254
+ },
+ {
+  "accepted_s": 0.0037,
+  "first_exec_s": 0.251
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.237
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.235
+ },
+ {
+  "accepted_s": 0.0037,
+  "first_exec_s": 0.237
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.232
+ },
+ {
+  "accepted_s": 0.0036,
+  "first_exec_s": 0.248
+ }
+]

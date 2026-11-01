@@ -1,0 +1,109 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "/tmp/tok",
+    "ca": "/tmp/ca.pem",
+    "pool": "default",
+    "template": "py",
+    "tag": null,
+    "total": 6000,
+    "concurrency": 8,
+    "rate": 15.0,
+    "hold_secs": 0,
+    "touch": false,
+    "through_refusals": true,
+    "keep": true,
+    "allow_existing": true,
+    "settle_secs": 30.0,
+    "timeout": 60.0,
+    "out": "/tmp/run2/x2_total.json"
+  },
+  "ramp_secs": 400.686,
+  "creates": {
+    "attempted": 6000,
+    "placed": 5912,
+    "refused": 88,
+    "failed": 0,
+    "per_sec": 14.75,
+    "latency": {
+      "n": 5912,
+      "min": 0.0035527700019883923,
+      "p50": 0.004680481999457697,
+      "p90": 0.007150292697770059,
+      "p99": 0.03246506163763122,
+      "max": 0.13750636500117253,
+      "mean": 0.006089845270311594
+    },
+    "refusal_reasons": [
+      [
+        "every node in pool default is too loaded: f10: 486 MiB free, below the 512 MiB floor; f3: 506 MiB free, below the 512 MiB floor; f5: 476 MiB free, below the 512 MiB floor; f7: 503 MiB free, below the ",
+        23
+      ],
+      [
+        "every node in pool default is too loaded: f10: 486 MiB free, below the 512 MiB floor; f3: 506 MiB free, below the 512 MiB floor; f5: 484 MiB free, below the 512 MiB floor; f7: 503 MiB free, below the ",
+        21
+      ],
+      [
+        "every node in pool default is too loaded: f10: 486 MiB free, below the 512 MiB floor; f3: 506 MiB free, below the 512 MiB floor; f5: 493 MiB free, below the 512 MiB floor; f7: 503 MiB free, below the ",
+        19
+      ],
+      [
+        "every node in pool default is too loaded: f10: 494 MiB free, below the 512 MiB floor; f3: 502 MiB free, below the 512 MiB floor; f5: 488 MiB free, below the 512 MiB floor; f7: 488 MiB free, below the ",
+        8
+      ],
+      [
+        "every node in pool default is too loaded: f10: 486 MiB free, below the 512 MiB floor; f3: 506 MiB free, below the 512 MiB floor; f5: 492 MiB free, below the 512 MiB floor; f7: 503 MiB free, below the ",
+        6
+      ]
+    ],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 30.0,
+    "up": 3885,
+    "pending": 0,
+    "failed": 2027,
+    "gone": 0,
+    "errors": [
+      [
+        "node held it back: 481 MiB free, below its own 512 MiB floor",
+        114
+      ],
+      [
+        "node held it back: 495 MiB free, below its own 512 MiB floor",
+        106
+      ],
+      [
+        "node held it back: 492 MiB free, below its own 512 MiB floor",
+        101
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 0,
+    "latency": {}
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 1052,
+    "f3": 1002,
+    "f7": 1020,
+    "f5": 993,
+    "f8": 984,
+    "f9": 861
+  },
+  "end_tiers": {
+    "snapshot": 9311
+  },
+  "samples": [],
+  "control_plane": {
+    "creates_placed": 5912.0,
+    "creates_refused": 88.0,
+    "demotions": 11824.0,
+    "store_lock_wait_p50": 0.00026575621341928915,
+    "store_lock_wait_p99": 0.022500858369098733,
+    "store_lock_held_p99": 0.04309934497816591,
+    "create_route_p99": 0.021487915407854986
+  }
+}

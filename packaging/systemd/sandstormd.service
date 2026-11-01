@@ -1,0 +1,122 @@
+[Unit]
+Description=sandstorm master/node daemon
+Documentation=https://github.com/deeplethe/sandstorm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Both halves in one process, which is the single-machine case. A node
+# joining an existing master drops --master and adds --master-url.
+ExecStart=/usr/local/bin/sandstormd serve \
+  --master --node \
+  --bind 127.0.0.1:8080 \
+  --state-db /var/lib/sandstorm/state.db \
+  --pki-dir /var/lib/sandstorm/pki \
+  --work-dir /var/lib/sandstorm
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+# A descriptor per sandbox, asleep or awake: the gateway keeps a listener
+# open for every one so a request can wake it. The daemon raises its soft
+# limit to this at startup; at the default 1024 a node stops near a
+# thousand sandboxes with "No file descriptors available".
+LimitNOFILE=524288
+StateDirectory=sandstorm
+LogsDirectory=sandstorm
+RuntimeDirectory=sandstorm
+
+# The daemon manages netns + cgroup, both of which need CAP_NET_ADMIN
+# and CAP_SYS_ADMIN. It must be able to write under /sys/fs/cgroup
+# (a delegated subtree is preferred over running as root). It also
+# installs the iptables rules that keep a sandbox off the host's own
+# services, which needs CAP_NET_RAW alongside CAP_NET_ADMIN.
+# The last two are not optional, however much they look like it, and
+# neither failure names a capability.
+#
+#   CAP_DAC_OVERRIDE  the per-sandbox overlay mount returns EPERM, which
+#                     util-linux reports as "cannot mount overlay
+#                     read-only" -- a filesystem-sounding message for a
+#                     permissions problem.
+#   CAP_NET_BIND_SERVICE  for `--listen` on a port below 1024. The first
+#                     fleet could only open 22 and 80 inbound, so the
+#                     node listens on 80, and without this the bind fails
+#                     with EACCES even though the process runs as root.
+#   CAP_SETFCAP       runsc's gofer re-execs /proc/self/exe and fails
+#                     with "operation not permitted". Found by binary
+#                     search over the whole capability set on bm: the
+#                     bounding set is what matters here, not the ambient
+#                     one, because the gofer's exec is what needs it.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_KILL CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SETFCAP CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_KILL CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SETFCAP CAP_NET_BIND_SERVICE
+
+# Hardening — relaxed only where sandstorm genuinely needs the access.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# /run as well: `ip netns add` creates its namespace file under
+# /run/netns, and the runsc state root defaults to /run/sandstorm-runsc.
+# ProtectSystem=strict makes everything outside /dev, /proc and /sys
+# read-only, so without this a node registers, polls, reports healthy --
+# and fails every sandbox with
+#     creating netns: ["ip","netns","add",...] failed
+# which is what it did on bm until this line was added.
+ReadWritePaths=/var/lib/sandstorm /var/log/sandstorm /sys/fs/cgroup /run
+ProtectControlGroups=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# AF_PACKET too: gVisor's network stack opens a raw packet socket on
+# each sandbox interface, and without it `runsc start` fails with
+#     unable to create raw socket: address family not supported by protocol
+# which sounds like a kernel that is missing something and is this line.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK AF_PACKET
+# Allowed namespaces (RestrictNamespaces is an allowlist; everything else
+# returns EPERM on unshare/clone). Document the reason for each so a
+# well-intentioned trim doesn't silently break a feature:
+#   net    — per-sandbox network namespace (one veth pair per sandbox,
+#            which is what keeps it off the control plane and its
+#            siblings)
+#   mnt    — per-sandbox mount namespace (overlay rootfs, volume)
+#   user   — unprivileged subprocess isolation
+#   pid    — per-sandbox PID namespace, so a sandbox sees only its own
+#            processes
+#   cgroup — required for per-child cgroup-v2 namespace under the
+#            delegated subtree (without this, `unshare(CLONE_NEWCGROUP)`
+#            returns EPERM — see #163)
+# ipc and uts as well. runsc's gofer clones with CLONE_NEWIPC and
+# CLONE_NEWUTS together, and this filter rejects the whole clone if
+# either is missing -- adding only one of the two does not help. The
+# failure is `gofer: fork/exec /proc/self/exe: operation not permitted`,
+# which names neither namespaces nor systemd. Omitting them was a slip
+# in writing the list, not a policy: a node needs every namespace type
+# except time.
+RestrictNamespaces=net mnt user pid cgroup ipc uts
+RestrictRealtime=true
+SystemCallArchitectures=native
+# No SystemCallFilter, and that is deliberate.
+#
+# gVisor IS a syscall implementation: the sentry and its gofer use a set
+# well outside @system-service, and it moves between runsc releases. A
+# name allowlist here is a list that works until it doesn't, and the way
+# it fails is a process killed with SIGSYS and an empty stderr -- the
+# node reported `creating netns: [...] failed:` with nothing after the
+# colon, because mount(2) was being killed rather than refused.
+#
+# Measured on bm by building this unit up one line at a time: every
+# other setting below passes with a sandbox actually running, and
+# `SystemCallFilter=@system-service @mount` fails, with or without
+# @resources added back. Something gVisor needs is simply not in those
+# sets, and guessing at the rest would ship a unit that breaks on the
+# next runsc.
+#
+# What is left is not nothing: CapabilityBoundingSet, RestrictNamespaces,
+# RestrictAddressFamilies, ProtectSystem=strict and the Protect* options
+# below install fifteen seccomp filters between them. The allowlist is
+# the one piece a sandbox runtime cannot live under.
+
+[Install]
+WantedBy=multi-user.target

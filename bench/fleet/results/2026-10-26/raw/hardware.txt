@@ -1,0 +1,8 @@
+f1|7.0.0-14-generic|Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz|2|1962|
+f3|7.0.0-14-generic|AMD EPYC 7K62 48-Core Processor|2|1962|runsc version release-20261019.0
+f5|7.0.0-14-generic|AMD EPYC 7K62 48-Core Processor|2|1962|runsc version release-20261019.0
+f6|7.0.0-14-generic|AMD EPYC 7K83 64-Core Processor|2|1930|runsc version release-20261019.0
+f7|7.0.0-14-generic|AMD EPYC 7K62 48-Core Processor|2|1962|runsc version release-20261019.0
+f8|7.0.0-14-generic|AMD EPYC 7K62 48-Core Processor|2|1962|runsc version release-20261019.0
+f9|7.0.0-14-generic|AMD EPYC 7K62 48-Core Processor|2|1962|runsc version release-20261019.0
+f10|7.0.0-14-generic|AMD EPYC 7K62 48-Core Processor|2|1962|runsc version release-20261019.0

@@ -1,0 +1,252 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "tok",
+    "ca": "ca.pem",
+    "pool": "default",
+    "template": "web",
+    "tag": null,
+    "total": 900,
+    "concurrency": 4,
+    "rate": null,
+    "hold_secs": 20.0,
+    "touch": true,
+    "through_refusals": false,
+    "keep": false,
+    "allow_existing": true,
+    "settle_secs": 60.0,
+    "timeout": 60.0,
+    "out": "out/wall_web-2.json"
+  },
+  "ramp_secs": 2.054,
+  "creates": {
+    "attempted": 900,
+    "placed": 900,
+    "refused": 0,
+    "failed": 0,
+    "per_sec": 438.1,
+    "latency": {
+      "n": 900,
+      "min": 0.0033984429992415244,
+      "p50": 0.007925454999622161,
+      "p90": 0.013097299199580447,
+      "p99": 0.030663878619861855,
+      "max": 0.04152993600018817,
+      "mean": 0.008989925243322433
+    },
+    "refusal_reasons": [],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 60.0,
+    "up": 456,
+    "pending": 0,
+    "failed": 444,
+    "gone": 0,
+    "errors": [
+      [
+        "node held it back: 508 MiB of swap free, below its own 511 MiB floor, counting 426 MiB for sandboxes still starting",
+        69
+      ],
+      [
+        "node held it back: 436 MiB free, below its own 512 MiB floor, counting 541 MiB for sandboxes still starting",
+        58
+      ],
+      [
+        "node held it back: 443 MiB free, below its own 512 MiB floor, counting 559 MiB for sandboxes still starting",
+        48
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 900,
+    "latency": {
+      "n": 900,
+      "min": 0.002981644999636046,
+      "p50": 0.007536869999967166,
+      "p90": 0.013066722700386892,
+      "p99": 0.028588880229453932,
+      "max": 0.04362242800016247,
+      "mean": 0.008664926637794553
+    }
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 150,
+    "f3": 150,
+    "f5": 150,
+    "f8": 150,
+    "f9": 150,
+    "f7": 150
+  },
+  "end_tiers": {
+    "snapshot": 128,
+    "hot": 772
+  },
+  "samples": [
+    {
+      "t": 63.7,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 992,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 990,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 957,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1023,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 976,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 945,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 70.3,
+      "tiers": {
+        "hot": 900
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 1412,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1472,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 1323,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1023,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1313,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 945,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 77.0,
+      "tiers": {
+        "snapshot": 64,
+        "hot": 836
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 564,
+          "psi": 0.14,
+          "not_admitting": null
+        },
+        "f3": {
+          "free_mib": 1472,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 503,
+          "psi": 0.0,
+          "not_admitting": "503 MiB free, below the 512 MiB floor"
+        },
+        "f7": {
+          "free_mib": 1348,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 1313,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1279,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 84.4,
+      "tiers": {
+        "snapshot": 128,
+        "hot": 772
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 494,
+          "psi": 0.06,
+          "not_admitting": "494 MiB free, below the 512 MiB floor"
+        },
+        "f3": {
+          "free_mib": 504,
+          "psi": 0.0,
+          "not_admitting": "504 MiB free, below the 512 MiB floor"
+        },
+        "f5": {
+          "free_mib": 503,
+          "psi": 0.0,
+          "not_admitting": "503 MiB free, below the 512 MiB floor"
+        },
+        "f7": {
+          "free_mib": 1348,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 510,
+          "psi": 0.09,
+          "not_admitting": "510 MiB free, below the 512 MiB floor"
+        },
+        "f9": {
+          "free_mib": 1279,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    }
+  ],
+  "control_plane": {
+    "creates_placed": 900.0,
+    "creates_refused": 0.0,
+    "demotions": 1634.0,
+    "store_lock_wait_p50": 0.0002765891540164391,
+    "store_lock_wait_p99": 0.002483764681353813,
+    "store_lock_held_p99": 0.004156128630705402,
+    "create_route_p99": 0.009399358974358923
+  }
+}

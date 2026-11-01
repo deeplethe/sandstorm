@@ -1,0 +1,65 @@
+[package]
+name = "sandstorm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The daemon, as sandstorm-controller was before it. Named "sandstormd" because
+# sandstorm-cli used to ship a `sandstorm` binary in the same workspace; that
+# crate is gone (it lives in the v0.5.3 tag), so the name is free again.
+[[bin]]
+name = "sandstormd"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+axum = { workspace = true }
+parking_lot = { workspace = true }
+libc = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { workspace = true }
+rcgen = { workspace = true, features = ["x509-parser"] }
+# Also validate the persisted CA's self-signature; rcgen only imports its parameters.
+x509-parser = { version = "0.16", features = ["verify"] }
+# The control plane's transport. identity.rs has issued the certificates
+# since the first v0.6 commit; these are what finally serve and verify them.
+axum-server = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = "2"
+tokio-rustls = "0.26"
+# Only for the Layer trait, to attach the peer certificate to requests.
+tower-layer = "0.3"
+rustls-pki-types = "1"
+sha2 = "0.10"
+tar = "0.4"
+# The scoped token a node presents to fetch a tag from another node.
+hmac = "0.12"
+# Streaming a tag image out of the agent without reading it into memory.
+tokio-util = { version = "0.7", features = ["io"] }
+rand = "0.8"
+# auth.rs and audit.rs came over from sandstorm-controller unchanged.
+subtle = { version = "2", default-features = false }
+time = { version = "0.3", default-features = false, features = ["formatting", "macros"] }
+hex = "0.4"
+# The gateway and the E2B front door stream bodies and splice upgrades, which
+# needs HTTP/1.1 below reqwest. All three already come in through axum.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body = "1"
+bytes = "1"
+# The front door hands API requests to the E2B router as a service.
+tower = { version = "0.5", features = ["util"] }
+
+[dev-dependencies]
+tempfile = "3"
+http-body-util = "0.1"
+futures-util = "0.3"

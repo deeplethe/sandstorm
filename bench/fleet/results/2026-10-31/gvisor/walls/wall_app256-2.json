@@ -1,0 +1,256 @@
+{
+  "master": "https://10.2.0.11:80",
+  "args": {
+    "master": "https://10.2.0.11:80",
+    "token_file": "tok",
+    "ca": "ca.pem",
+    "pool": "default",
+    "template": "app256",
+    "tag": null,
+    "total": 900,
+    "concurrency": 4,
+    "rate": null,
+    "hold_secs": 20.0,
+    "touch": true,
+    "through_refusals": false,
+    "keep": false,
+    "allow_existing": true,
+    "settle_secs": 60.0,
+    "timeout": 60.0,
+    "out": "out/wall_app256-2.json"
+  },
+  "ramp_secs": 2.837,
+  "creates": {
+    "attempted": 729,
+    "placed": 725,
+    "refused": 4,
+    "failed": 0,
+    "per_sec": 255.58,
+    "latency": {
+      "n": 725,
+      "min": 0.0033626620006543817,
+      "p50": 0.011165488999722584,
+      "p90": 0.031487242999719466,
+      "p99": 0.04311301075977099,
+      "max": 0.06471938799950294,
+      "mean": 0.01539797843034868
+    },
+    "refusal_reasons": [
+      [
+        "every node in pool default is too loaded: f10: 361 MiB free, below the 512 MiB floor; f3: 510 MiB free, below the 512 MiB floor; f5: 355 MiB free, below the 512 MiB floor; f7: 481 MiB free, below the ",
+        4
+      ]
+    ],
+    "failures": []
+  },
+  "settled": {
+    "after_secs": 60.0,
+    "up": 33,
+    "pending": 0,
+    "failed": 692,
+    "gone": 0,
+    "errors": [
+      [
+        "node held it back: 486 MiB of swap free, below its own 511 MiB floor",
+        238
+      ],
+      [
+        "node held it back: 463 MiB of swap free, below its own 511 MiB floor",
+        149
+      ],
+      [
+        "node held it back: 490 MiB of swap free, below its own 511 MiB floor",
+        143
+      ]
+    ]
+  },
+  "deletes": {
+    "n": 725,
+    "latency": {
+      "n": 725,
+      "min": 0.003108767999947304,
+      "p50": 0.006958963999750267,
+      "p90": 0.010593560799316037,
+      "p99": 0.026559195039953912,
+      "max": 0.03236257699973066,
+      "mean": 0.007711121706194937
+    }
+  },
+  "pool": "default",
+  "placement": {
+    "f10": 171,
+    "f3": 246,
+    "f5": 151,
+    "f8": 157
+  },
+  "end_tiers": {
+    "snapshot": 1,
+    "hot": 724
+  },
+  "samples": [
+    {
+      "t": 64.4,
+      "tiers": {
+        "hot": 723,
+        "snapshot": 2
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 345,
+          "psi": 0.0,
+          "not_admitting": "345 MiB free, below the 512 MiB floor"
+        },
+        "f3": {
+          "free_mib": 691,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f5": {
+          "free_mib": 630,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f7": {
+          "free_mib": 1501,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 671,
+          "psi": 0.9,
+          "not_admitting": null
+        },
+        "f9": {
+          "free_mib": 1521,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 70.7,
+      "tiers": {
+        "hot": 720,
+        "snapshot": 5
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 435,
+          "psi": 1.88,
+          "not_admitting": "435 MiB free, below the 512 MiB floor"
+        },
+        "f3": {
+          "free_mib": 194,
+          "psi": 6.14,
+          "not_admitting": "194 MiB free, below the 512 MiB floor"
+        },
+        "f5": {
+          "free_mib": 418,
+          "psi": 0.24,
+          "not_admitting": "418 MiB free, below the 512 MiB floor"
+        },
+        "f7": {
+          "free_mib": 1501,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 382,
+          "psi": 0.6,
+          "not_admitting": "382 MiB free, below the 512 MiB floor"
+        },
+        "f9": {
+          "free_mib": 1522,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 77.0,
+      "tiers": {
+        "hot": 720,
+        "snapshot": 5
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 435,
+          "psi": 1.03,
+          "not_admitting": "435 MiB free, below the 512 MiB floor"
+        },
+        "f3": {
+          "free_mib": 199,
+          "psi": 3.37,
+          "not_admitting": "199 MiB free, below the 512 MiB floor"
+        },
+        "f5": {
+          "free_mib": 417,
+          "psi": 0.13,
+          "not_admitting": "417 MiB free, below the 512 MiB floor"
+        },
+        "f7": {
+          "free_mib": 1501,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 409,
+          "psi": 0.33,
+          "not_admitting": "409 MiB free, below the 512 MiB floor"
+        },
+        "f9": {
+          "free_mib": 1524,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    },
+    {
+      "t": 83.3,
+      "tiers": {
+        "hot": 725
+      },
+      "nodes": {
+        "f10": {
+          "free_mib": 431,
+          "psi": 0.69,
+          "not_admitting": "431 MiB free, below the 512 MiB floor"
+        },
+        "f3": {
+          "free_mib": 201,
+          "psi": 1.85,
+          "not_admitting": "201 MiB free, below the 512 MiB floor"
+        },
+        "f5": {
+          "free_mib": 416,
+          "psi": 0.08,
+          "not_admitting": "416 MiB free, below the 512 MiB floor"
+        },
+        "f7": {
+          "free_mib": 1501,
+          "psi": 0.0,
+          "not_admitting": null
+        },
+        "f8": {
+          "free_mib": 416,
+          "psi": 0.22,
+          "not_admitting": "416 MiB free, below the 512 MiB floor"
+        },
+        "f9": {
+          "free_mib": 1524,
+          "psi": 0.0,
+          "not_admitting": null
+        }
+      }
+    }
+  ],
+  "control_plane": {
+    "creates_placed": 725.0,
+    "creates_refused": 4.0,
+    "demotions": 877.0,
+    "store_lock_wait_p50": 0.0002744417275136107,
+    "store_lock_wait_p99": 0.0024571923656454024,
+    "store_lock_held_p99": 0.004082735576923076,
+    "create_route_p99": 0.009458088235294058
+  }
+}

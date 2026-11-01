@@ -1,22 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/forkd-vmm",
-    "crates/forkd-controller",
-    "crates/forkd-cli",
-    "crates/forkd-uffd",
-    "experiments/v0.4-uffd-wp-poc",
-    "experiments/v0.4-kvm-uffd-wp-poc",
-    "experiments/v0.4-thp-uffd-wp-poc",
-    "experiments/v0.4-restore-poc",
+    "crates/sandstorm-core",
 ]
 
 [workspace.package]
-version = "0.5.3"
+version = "0.6.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/deeplethe/forkd"
-authors = ["Deeplethe <info@deeplethe.com>", "forkd contributors"]
+repository = "https://github.com/deeplethe/sandstorm"
+authors = ["Deeplethe <info@deeplethe.com>", "sandstorm contributors"]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }

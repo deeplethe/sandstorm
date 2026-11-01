@@ -1,0 +1,31 @@
+master   https://10.2.0.11:80
+nodes    6 connected of 6
+  pool default
+    f10              free=1479 MiB psi=0.0 cap=none
+    f3               free=1502 MiB psi=0.0 cap=none
+    f5               free=1498 MiB psi=0.0 cap=none
+    f7               free=1488 MiB psi=0.0 cap=none
+    f8               free=1492 MiB psi=0.0 cap=none
+    f9               free=1493 MiB psi=0.0 cap=none
+
+ramp     14000 creates, 8 at a time, 15.0/s
+         14000 accepted in 936.076s (15.0/s)
+settle   after 30s: 5876 up, 80 pending, 8044 failed
+
+keep     14000 sandboxes left running (--keep)
+
+==============================================================
+creates   14000 accepted, 0 refused, 0 errored   14.96/s
+[31mstarted   5876 up, 80 pending, 8044 failed to start[0m
+  NOT RUNNING  1x  sb-88a14ea1a28eda002ed991f6c5135482: frozen -> snapshot: checkpointing sb-88a14ea1a28eda002ed991f6c5135482: running runsc ["checkpoint", "--image-path=/var/lib/
+  NOT RUNNING  1x  sb-0984e6428bbcf01015fdba5479862d37: frozen -> snapshot: checkpointing sb-0984e6428bbcf01015fdba5479862d37: running runsc ["checkpoint", "--image-path=/var/lib/
+  NOT RUNNING  1x  sb-49fde8c8019fa610df2ee6ac37651059: frozen -> snapshot: checkpointing sb-49fde8c8019fa610df2ee6ac37651059: running runsc ["checkpoint", "--image-path=/var/lib/
+          p50 34ms   p90 159ms   p99 255ms   max 461ms
+placement f10=3616, f7=3616, f9=3615, f8=1109, f3=1022, f5=1022
+          spread 2594 between the busiest and quietest node
+store lock p50 3.0ms  p99 48.7ms  (held p99 49.0ms)
+master saw 14000.0 placed, 0.0 refused, 28000.0 demotions
+POST /v1/sandboxes server-side p99 49.5ms
+tiers at end  {'snapshot': 14000}
+==============================================================
+wrote out/ceiling.json

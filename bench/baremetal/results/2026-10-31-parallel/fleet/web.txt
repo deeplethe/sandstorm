@@ -1,0 +1,24 @@
+new-10-23711.log:          240 accepted in 0.524s (458.4/s)
+new-10-23711.log: settle   after 10s: 103 up, 0 pending, 137 failed
+new-10-23711.log: creates   240 accepted, 0 refused, 0 errored   458.37/s
+new-10-30768.log:          240 accepted in 0.515s (466.4/s)
+new-10-30768.log: settle   after 10s: 97 up, 0 pending, 143 failed
+new-10-30768.log: creates   240 accepted, 0 refused, 0 errored   466.35/s
+new-60-14780.log:          240 accepted in 0.523s (458.6/s)
+new-60-14780.log: settle   after 60s: 198 up, 0 pending, 42 failed
+new-60-14780.log: creates   240 accepted, 0 refused, 0 errored   458.62/s
+new-60-14992.log:          240 accepted in 0.518s (463.7/s)
+new-60-14992.log: settle   after 60s: 197 up, 0 pending, 43 failed
+new-60-14992.log: creates   240 accepted, 0 refused, 0 errored   463.7/s
+serial-10-19729.log:          240 accepted in 0.520s (461.6/s)
+serial-10-19729.log: settle   after 10s: 109 up, 0 pending, 131 failed
+serial-10-19729.log: creates   240 accepted, 0 refused, 0 errored   461.6/s
+serial-10-23092.log:          240 accepted in 0.517s (463.8/s)
+serial-10-23092.log: settle   after 10s: 111 up, 0 pending, 129 failed
+serial-10-23092.log: creates   240 accepted, 0 refused, 0 errored   463.85/s
+serial-60-11010.log:          240 accepted in 0.523s (458.8/s)
+serial-60-11010.log: settle   after 60s: 208 up, 0 pending, 32 failed
+serial-60-11010.log: creates   240 accepted, 0 refused, 0 errored   458.85/s
+serial-60-24368.log:          240 accepted in 0.516s (464.8/s)
+serial-60-24368.log: settle   after 60s: 205 up, 0 pending, 35 failed
+serial-60-24368.log: creates   240 accepted, 0 refused, 0 errored   464.8/s

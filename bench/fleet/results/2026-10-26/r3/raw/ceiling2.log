@@ -1,0 +1,36 @@
+master   https://10.2.0.11:80
+nodes    6 connected of 6
+  pool default
+    f10              free=1386 MiB psi=0.0 cap=none
+    f3               free=1445 MiB psi=0.0 cap=none
+    f5               free=1436 MiB psi=0.0 cap=none
+    f7               free=1442 MiB psi=0.0 cap=none
+    f8               free=1431 MiB psi=0.0 cap=none
+    f9               free=1426 MiB psi=0.0 cap=none
+
+ramp     20000 creates, 8 at a time, 20.0/s
+         18416 accepted in 1002.626s (18.4/s)
+settle   after 30s: 12544 up, 36 pending, 5836 failed
+
+keep     18416 sandboxes left running (--keep)
+
+==============================================================
+creates   18416 accepted, 1584 refused, 0 errored   18.37/s
+[31mstarted   12544 up, 36 pending, 5836 failed to start[0m
+  NOT RUNNING  569x  node held it back: 507 MiB free, below its own 512 MiB floor
+  NOT RUNNING  533x  node held it back: 510 MiB free, below its own 512 MiB floor
+  NOT RUNNING  489x  node held it back: 511 MiB free, below its own 512 MiB floor
+          p50 6ms   p90 9ms   p99 47ms   max 167ms
+placement f10=3316, f3=3125, f5=3067, f8=3010, f9=3010, f7=2888
+          spread 428 between the busiest and quietest node
+refused   349x  every node in pool default is too loaded: f10: 489 MiB free, below the 512 MiB floor; f3: 497 MiB free, below the 512 MiB floor; f5: 486 MiB free, below the 512 MiB floor; f7: 504 MiB free, below the 
+refused   177x  every node in pool default is too loaded: f10: 510 MiB free, below the 512 MiB floor; f3: 502 MiB free, below the 512 MiB floor; f5: 495 MiB free, below the 512 MiB floor; f7: 484 MiB free, below the 
+refused   174x  every node in pool default is too loaded: f10: 506 MiB free, below the 512 MiB floor; f3: 503 MiB free, below the 512 MiB floor; f5: 507 MiB free, below the 512 MiB floor; f7: 505 MiB free, below the 
+refused   123x  every node in pool default is too loaded: f10: 489 MiB free, below the 512 MiB floor; f3: 497 MiB free, below the 512 MiB floor; f5: 501 MiB free, below the 512 MiB floor; f7: 504 MiB free, below the 
+refused   120x  every node in pool default is too loaded: f10: 502 MiB free, below the 512 MiB floor; f3: 504 MiB free, below the 512 MiB floor; f5: 507 MiB free, below the 512 MiB floor; f7: 482 MiB free, below the 
+store lock p50 0.3ms  p99 16.3ms  (held p99 56.5ms)
+master saw 18416.0 placed, 1584.0 refused, 36832.0 demotions
+POST /v1/sandboxes server-side p99 31.1ms
+tiers at end  {'snapshot': 18416}
+==============================================================
+wrote out/ceiling2.json

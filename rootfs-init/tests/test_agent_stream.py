@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the forkd-agent.py stream action — coalesced-frame handling
+"""Tests for the sandstorm-agent.py stream action — coalesced-frame handling
 and interactive session lifecycle.
 
 Tests the coalesced-frame regression: when the initial stream request and
@@ -27,7 +27,7 @@ import unittest
 
 
 def _load_agent_module():
-    """Import forkd-agent.py as a module, handling its module-level side effects."""
+    """Import sandstorm-agent.py as a module, handling its module-level side effects."""
     orig_env = dict(os.environ)
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
@@ -35,8 +35,8 @@ def _load_agent_module():
             env_path = f.name
 
         spec = importlib.util.spec_from_file_location(
-            'forkd_agent_stream_test',
-            os.path.join(os.path.dirname(__file__), '..', 'forkd-agent.py'),
+            'sandstorm_agent_stream_test',
+            os.path.join(os.path.dirname(__file__), '..', 'sandstorm-agent.py'),
         )
         module = importlib.util.module_from_spec(spec)
         orig_open = open
