@@ -4,7 +4,7 @@ Notable changes per release. Sandstorm follows [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html) once it reaches
 1.0; until then, the minor version can break compatibility.
 
-## v0.6.0 - 2026-11-01
+## v0.6.0 - 2026-11-02
 
 The first release as Sandstorm, and a different program from v0.5: one binary
 that runs a master and a fleet of nodes, gVisor by default so a node needs no
