@@ -716,6 +716,12 @@ impl Runtime {
         let archive = self.archive_path(id);
         let restore_from = archive.exists().then_some(archive.as_path());
         if restore_from.is_some() {
+            if self.tier_of(id)?.is_some() {
+                bail!("{id} is already on this node; it cannot be restored over");
+            }
+            // A failed prepare or boot can leave a partial layer, or a mounted
+            // one. Rebuild from the archive rather than trusting either.
+            self.reap_with_net(id)?;
             tracing::info!(%id, archive = %archive.display(), "restoring detached layer");
         }
 
@@ -1619,13 +1625,23 @@ impl Runtime {
         // Prefer our own record: the master may be asking about an orphan it
         // no longer has a row for.
         let index = net_index.or_else(|| self.net_index_of(id));
-        // Read the address before teardown removes what it is derived from,
-        // or the rule outlives the sandbox and the next holder of that slot
-        // is refused.
+        self.destroy(id)?;
+        self.teardown_net(id, index)
+    }
+
+    /// Release a failed start's local resources, keeping its recovery archive.
+    pub(super) fn reap_with_net(&self, id: &str) -> Result<()> {
+        let index = self.net_index_of(id);
+        self.cleanup_local(id)?;
+        self.teardown_net(id, index)
+    }
+
+    fn teardown_net(&self, id: &str, index: Option<u32>) -> Result<()> {
+        // The index was read before local teardown removed the bundle, so the
+        // next holder of that address does not inherit its cold rule.
         let ip = index
             .and_then(|i| self.cfg.net.slot(id, i).ok())
             .map(|s| s.sandbox_ip);
-        self.destroy(id)?;
         self.egress
             .clear(id)
             .with_context(|| format!("removing what {id} was allowed to reach"))?;
@@ -1773,6 +1789,17 @@ impl Runtime {
     }
 
     pub fn destroy(&self, id: &str) -> Result<()> {
+        self.cleanup_local(id)?;
+        // The archived layer is ours; the volume's /workspace is the user's
+        // and is left alone.
+        if let Some(d) = self.archive_path(id).parent() {
+            std::fs::remove_dir_all(d).ok();
+        }
+        tracing::info!(%id, "destroyed");
+        Ok(())
+    }
+
+    fn cleanup_local(&self, id: &str) -> Result<()> {
         // Thaw first: a frozen cgroup's tasks cannot be killed at all. On bm
         // this left gvisor_sentry processes that nothing could reap and that
         // went on holding their sandbox's port.
@@ -1804,12 +1831,6 @@ impl Runtime {
         }
         self.drop_snapshot(id);
         self.engine.teardown(&self.cfg, id)?;
-        // The archived layer is ours; the volume's /workspace is the user's
-        // and is left alone.
-        if let Some(d) = self.archive_path(id).parent() {
-            std::fs::remove_dir_all(d).ok();
-        }
-        tracing::info!(%id, "destroyed");
         Ok(())
     }
 }
