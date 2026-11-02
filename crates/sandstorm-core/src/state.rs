@@ -776,13 +776,14 @@ impl Store {
         Ok(n > 0)
     }
 
-    pub fn set_node_health(&self, id: &str, free_mib: u64, psi: f64) -> Result<()> {
-        self.conn.execute(
+    /// False if the node is absent or revoked; a stale report cannot reconnect it.
+    pub fn set_node_health(&self, id: &str, free_mib: u64, psi: f64) -> Result<bool> {
+        let updated = self.conn.execute(
             "UPDATE nodes SET connected=1, last_seen_at=?2, free_mib=?3, psi_some_avg10=?4
-             WHERE id=?1",
+             WHERE id=?1 AND revoked=0",
             params![id, now_secs(), free_mib as i64, psi],
         )?;
-        Ok(())
+        Ok(updated > 0)
     }
 
     pub fn list_nodes(&self) -> Result<Vec<Node>> {
@@ -1884,11 +1885,22 @@ mod tests {
             psi_some_avg10: 0.0,
         })
         .unwrap();
-        s.set_node_health("bm-1", 408, 15.6).unwrap();
+        assert!(s.set_node_health("bm-1", 408, 15.6).unwrap());
         let n = &s.list_nodes().unwrap()[0];
         assert_eq!(n.free_mib, 408);
         assert!((n.psi_some_avg10 - 15.6).abs() < 1e-9);
         assert!(n.connected, "reporting health means it is connected");
+
+        s.revoke_node("bm-1").unwrap();
+        assert!(!s.set_node_health("bm-1", 1024, 0.0).unwrap());
+        let n = &s.list_nodes().unwrap()[0];
+        assert!(!n.connected, "a revoked node stays offline");
+        assert_eq!(n.free_mib, 408, "a revoked report does not update health");
+        assert!((n.psi_some_avg10 - 15.6).abs() < 1e-9);
+
+        s.set_node_cert("bm-1", "new-certificate").unwrap();
+        assert!(s.set_node_health("bm-1", 1024, 0.0).unwrap());
+        assert!(s.list_nodes().unwrap()[0].connected);
     }
 
     /// A restart must not inherit the last run's connectivity.
