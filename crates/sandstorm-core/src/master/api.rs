@@ -3165,15 +3165,18 @@ pub(super) async fn create_sandbox(
             vec![(n.id, n.pool); count as usize]
         }
         Place::Node(n) => {
-            let pool = store
-                .list_nodes()
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-                .into_iter()
-                .find(|x| &x.id == n)
-                .map(|x| x.pool)
-                .or_else(|| req.pool.clone())
-                .unwrap_or_else(|| "default".into());
-            vec![(n.clone(), pool); count as usize]
+            let node = pick_node_where(
+                &st,
+                &store,
+                &format!("node {n}"),
+                |node| &node.id == n,
+                &HashMap::new(),
+                count,
+            )
+            .inspect_err(|_| {
+                st.metrics.creates_refused.fetch_add(1, Relaxed);
+            })?;
+            vec![(node.id, node.pool); count as usize]
         }
         // A fork spreads: each child goes to the least loaded matching node,
         // counting the children already placed in this call.
