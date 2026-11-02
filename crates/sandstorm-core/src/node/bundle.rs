@@ -330,7 +330,7 @@ pub(super) fn unpack_into(archive: &Path, dest: &Path) -> Result<()> {
     let status = Exec::new("sh")
         .arg("-c")
         .arg(format!(
-            "zstd -dq -T0 -c {} | tar -C {} -xf -",
+            "zstd -dq -T0 -c {} | tar --xattrs --xattrs-include='trusted.overlay.*' --xattrs-include='user.overlay.*' -C {} -xf -",
             shell_quote(&archive.to_string_lossy()),
             shell_quote(&dest.to_string_lossy())
         ))
