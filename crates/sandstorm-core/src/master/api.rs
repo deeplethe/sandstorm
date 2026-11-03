@@ -1928,7 +1928,7 @@ async fn run_exec(
     args: Vec<String>,
     timeout_secs: u64,
 ) -> Result<CommandResult, ApiErr> {
-    let (node_id, tier) = {
+    let node_id = {
         let store = st.store();
         let Some(sb) = store
             .get_sandbox(id)
@@ -1936,17 +1936,24 @@ async fn run_exec(
         else {
             return Err(err(StatusCode::NOT_FOUND, "no such sandbox"));
         };
-        (sb.node_id, sb.tier)
+        // A command can only run in a sandbox that is running. Promoting first
+        // would hide a multi-second wait inside what looks like a quick call,
+        // so say so instead and let the caller decide.
+        if sb.tier != Tier::Hot {
+            return Err(err(
+                StatusCode::CONFLICT,
+                format!(
+                    "sandbox is {}; POST /v1/sandboxes/{id}/touch to bring it hot first",
+                    sb.tier
+                ),
+            ));
+        }
+        // Keep the hot check and touch atomic with respect to the idle sweep.
+        store
+            .touch(id)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        sb.node_id
     };
-    // A command can only run in a sandbox that is running. Promoting first
-    // would hide a multi-second wait inside what looks like a quick call,
-    // so say so instead and let the caller decide.
-    if tier != Tier::Hot {
-        return Err(err(
-            StatusCode::CONFLICT,
-            format!("sandbox is {tier}; POST /v1/sandboxes/{id}/touch to bring it hot first"),
-        ));
-    }
 
     let exec_id = random_token();
     let (tx, rx) = oneshot::channel();
@@ -1968,7 +1975,14 @@ async fn run_exec(
     // The node's own timeout plus room for a round trip and a loaded node.
     let budget = Duration::from_secs(timeout_secs.saturating_add(20));
     match tokio::time::timeout(budget, rx).await {
-        Ok(Ok(r)) => Ok(r),
+        Ok(Ok(r)) => {
+            // Idle starts at completion, including non-zero exits. Only touch:
+            // a manual freeze while this command ran must remain in force.
+            st.store()
+                .touch(id)
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            Ok(r)
+        }
         // Sender dropped, or nothing came back in time. Either way the
         // caller gets an answer rather than hanging.
         _ => {
