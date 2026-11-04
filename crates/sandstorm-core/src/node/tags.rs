@@ -25,13 +25,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use crate::proto::FetchFrom;
+use crate::proto::{FetchFrom, TagVersion};
 
 /// Headers a fetch carries. The token rides in a header, not the URL, so it
 /// stays out of any access log on the way.
 const FOR_NODE: &str = "x-sandstorm-fetch-for";
 const EXPIRES: &str = "x-sandstorm-fetch-expires";
 const TOKEN: &str = "x-sandstorm-fetch-token";
+const SNAPSHOT_ID: &str = "x-sandstorm-snapshot-id";
+const VERSIONS: &str = ".snapshots";
+const VERSION: &str = ".snapshot.json";
+// Serialize the existence check and publish fallback on filesystems without RENAME_NOREPLACE.
+static PUBLISHING: Mutex<()> = Mutex::new(());
 
 /// A tag younger than this is not reported as held. A branch writes the
 /// image before the master records the tag, and a tag the master has no
@@ -51,6 +56,84 @@ pub struct Manifest {
 pub struct ManifestFile {
     pub name: String,
     pub size: u64,
+}
+
+/// Immutable image location. The public tag name is metadata, not the cache key.
+pub fn version_path(tags_dir: &Path, tag: &str, snapshot_id: &str) -> Result<PathBuf> {
+    if !crate::tag::is_safe(tag) || !crate::tag::is_safe(snapshot_id) {
+        bail!("tag and snapshot id must be plain names");
+    }
+    Ok(tags_dir.join(VERSIONS).join(snapshot_id))
+}
+
+fn verify_image(image: &Path, tag: &str, snapshot_id: &str) -> Result<()> {
+    let version: TagVersion = serde_json::from_slice(
+        &std::fs::read(image.join(VERSION))
+            .with_context(|| format!("reading snapshot identity in {}", image.display()))?,
+    )?;
+    if version.tag != tag || version.snapshot_id != snapshot_id {
+        bail!("{} belongs to a different snapshot", image.display());
+    }
+    Ok(())
+}
+
+/// A restore must open this exact, verified directory, never resolve the tag again.
+pub fn image_path(tags_dir: &Path, tag: &str, snapshot_id: &str) -> Result<PathBuf> {
+    let image = version_path(tags_dir, tag, snapshot_id)?;
+    verify_image(&image, tag, snapshot_id)?;
+    Ok(image)
+}
+
+/// Bind a complete image to its identity before publishing its directory.
+pub fn seal(image: &Path, tag: &str, snapshot_id: &str) -> Result<()> {
+    version_path(Path::new(""), tag, snapshot_id)?;
+    let version = TagVersion {
+        tag: tag.into(),
+        snapshot_id: snapshot_id.into(),
+    };
+    let marker = image.join(VERSION);
+    let temporary = image.join(format!(".snapshot-{}", crate::identity::random_token()));
+    let result = (|| {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(&serde_json::to_vec(&version)?)?;
+        file.sync_all()?;
+        let _publishing = PUBLISHING.lock();
+        match super::runtime::publish(&temporary, &marker) {
+            Ok(()) => Ok(()),
+            Err(_) if marker.exists() => verify_image(image, tag, snapshot_id),
+            Err(error) => Err(error).with_context(|| format!("sealing {}", image.display())),
+        }
+    })();
+    std::fs::remove_file(&temporary).ok();
+    result
+}
+
+/// Only the authoritative source may adopt an image created before identities existed.
+pub fn source_image(tags_dir: &Path, tag: &str, snapshot_id: &str) -> Result<PathBuf> {
+    let image = version_path(tags_dir, tag, snapshot_id)?;
+    if image.exists() {
+        return image_path(tags_dir, tag, snapshot_id);
+    }
+    if !snapshot_id.starts_with("legacy-") {
+        bail!("snapshot {snapshot_id} of tag {tag} is not on this node");
+    }
+    let legacy = tags_dir.join(tag);
+    if !legacy.is_dir() {
+        // Another request may have just moved the source into its version directory.
+        return image_path(tags_dir, tag, snapshot_id);
+    }
+    seal(&legacy, tag, snapshot_id)?;
+    std::fs::create_dir_all(tags_dir.join(VERSIONS))?;
+    let _publishing = PUBLISHING.lock();
+    match super::runtime::publish(&legacy, &image) {
+        Ok(()) => image_path(tags_dir, tag, snapshot_id),
+        Err(_) if image.exists() => image_path(tags_dir, tag, snapshot_id),
+        Err(e) => Err(e).with_context(|| format!("adopting legacy tag {tag}")),
+    }
 }
 
 // ---- serving ---------------------------------------------------------------
@@ -81,14 +164,28 @@ fn refuse(status: StatusCode, msg: impl std::fmt::Display) -> Refusal {
 fn authorised(s: &Serve, tag: &str, h: &HeaderMap) -> Result<(), Refusal> {
     let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok()).unwrap_or("");
     let expires = get(EXPIRES).parse::<i64>().unwrap_or(0);
-    if crate::tag::fetch_token_valid(
-        &s.secret,
-        tag,
-        get(FOR_NODE),
-        expires,
-        get(TOKEN),
-        crate::state::now_secs(),
-    ) {
+    let snapshot_id = get(SNAPSHOT_ID);
+    let valid = if snapshot_id.is_empty() {
+        crate::tag::fetch_token_valid(
+            &s.secret,
+            tag,
+            get(FOR_NODE),
+            expires,
+            get(TOKEN),
+            crate::state::now_secs(),
+        )
+    } else {
+        crate::tag::fetch_snapshot_token_valid(
+            &s.secret,
+            tag,
+            snapshot_id,
+            get(FOR_NODE),
+            expires,
+            get(TOKEN),
+            crate::state::now_secs(),
+        )
+    };
+    if valid {
         Ok(())
     } else {
         Err(refuse(
@@ -99,9 +196,16 @@ fn authorised(s: &Serve, tag: &str, h: &HeaderMap) -> Result<(), Refusal> {
 }
 
 /// The tag's directory, if the name is plain and the image is here.
-fn tag_dir(s: &Serve, tag: &str) -> Result<PathBuf, Refusal> {
+fn tag_dir(s: &Serve, tag: &str, h: &HeaderMap) -> Result<PathBuf, Refusal> {
     if !crate::tag::is_safe(tag) {
         return Err(refuse(StatusCode::BAD_REQUEST, "not a plain tag name"));
+    }
+    if let Some(id) = h.get(SNAPSHOT_ID) {
+        let id = id
+            .to_str()
+            .map_err(|e| refuse(StatusCode::BAD_REQUEST, e))?;
+        return source_image(&s.tags_dir, tag, id)
+            .map_err(|e| refuse(StatusCode::NOT_FOUND, format!("{e:#}")));
     }
     let dir = s.tags_dir.join(tag);
     if !dir.is_dir() {
@@ -144,7 +248,7 @@ async fn manifest(
     h: HeaderMap,
 ) -> Result<Json<Manifest>, Refusal> {
     authorised(&s, &tag, &h)?;
-    let dir = tag_dir(&s, &tag)?;
+    let dir = tag_dir(&s, &tag, &h)?;
     let files = list_image(&dir)
         .map_err(|e| refuse(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
     Ok(Json(Manifest { files }))
@@ -156,7 +260,7 @@ async fn file(
     h: HeaderMap,
 ) -> Result<Response, Refusal> {
     authorised(&s, &tag, &h)?;
-    let dir = tag_dir(&s, &tag)?;
+    let dir = tag_dir(&s, &tag, &h)?;
     // The same rule as a tag: one plain name inside this one directory.
     if !crate::tag::is_safe(&name) {
         return Err(refuse(StatusCode::BAD_REQUEST, "not a plain file name"));
@@ -182,11 +286,11 @@ async fn file(
 
 // ---- fetching ----------------------------------------------------------------
 
-/// Fetches in progress on this node, by tag, so that many children of one
+/// Fetches in progress on this node, by snapshot, so that many children of one
 /// tag arriving together cause one fetch.
 #[derive(Default)]
 pub struct Fetches {
-    state: Mutex<HashMap<String, Fetch>>,
+    state: Mutex<HashMap<(String, String), Fetch>>,
 }
 
 enum Fetch {
@@ -212,15 +316,16 @@ impl Fetches {
     /// Called from the command loop, which must not wait on the network, so
     /// the fetch runs on its own task and this only reports where it is.
     pub fn ensure(self: &Arc<Self>, tags_dir: &Path, tag: &str, from: &FetchFrom) -> Status {
-        if tags_dir.join(tag).is_dir() {
+        if image_path(tags_dir, tag, &from.snapshot_id).is_ok() {
             return Status::Ready;
         }
+        let key = (tag.to_string(), from.snapshot_id.clone());
         let mut st = self.state.lock();
-        match st.get(tag) {
+        match st.get(&key) {
             Some(Fetch::Running) => return Status::Pending,
             Some(Fetch::Failed(e)) => {
                 let e = e.clone();
-                st.remove(tag);
+                st.remove(&key);
                 return Status::Failed(e);
             }
             None => {}
@@ -228,7 +333,7 @@ impl Fetches {
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return Status::Failed("no async runtime to fetch on".into());
         };
-        st.insert(tag.to_string(), Fetch::Running);
+        st.insert(key.clone(), Fetch::Running);
         drop(st);
 
         let (me, dir, tag, from) = (
@@ -247,12 +352,12 @@ impl Fetches {
                         %tag, from = %from.node_id, mib = bytes >> 20,
                         ms = t0.elapsed().as_millis() as u64, "fetched a tag"
                     );
-                    st.remove(&tag);
+                    st.remove(&key);
                 }
                 Err(e) => {
                     let e = format!("fetching tag {tag} from {}: {e:#}", from.node_id);
                     tracing::warn!(%tag, error = %e, "tag fetch failed");
-                    st.insert(tag, Fetch::Failed(e));
+                    st.insert(key, Fetch::Failed(e));
                 }
             }
         });
@@ -260,14 +365,16 @@ impl Fetches {
     }
 }
 
-/// Copy a tag's image from the node in `from` into `tags_dir/tag`.
+/// Copy exactly one snapshot into its immutable version directory.
 ///
 /// Into a hidden directory first, renamed into place only once every file
 /// is complete, so a restore never sees half an image and a crash leaves
 /// nothing that looks like a tag.
 pub async fn fetch(tags_dir: &Path, tag: &str, from: &FetchFrom) -> Result<u64> {
-    if !crate::tag::is_safe(tag) {
-        bail!("tag {tag:?} is not a plain name");
+    let dest = version_path(tags_dir, tag, &from.snapshot_id)?;
+    if dest.exists() {
+        image_path(tags_dir, tag, &from.snapshot_id)?;
+        return Ok(0);
     }
     let client = reqwest::Client::builder()
         .use_preconfigured_tls(crate::tls::pinned_leaf_client_config(&from.cert_sha256))
@@ -286,6 +393,7 @@ pub async fn fetch(tags_dir: &Path, tag: &str, from: &FetchFrom) -> Result<u64> 
         rb.header(FOR_NODE, &from.for_node)
             .header(EXPIRES, from.expires.to_string())
             .header(TOKEN, &from.token)
+            .header(SNAPSHOT_ID, &from.snapshot_id)
     };
 
     let r = authed(client.get(base.clone()))
@@ -306,7 +414,7 @@ pub async fn fetch(tags_dir: &Path, tag: &str, from: &FetchFrom) -> Result<u64> 
         bail!("{} lists no files for {tag}", from.address);
     }
 
-    std::fs::create_dir_all(tags_dir)?;
+    std::fs::create_dir_all(tags_dir.join(VERSIONS))?;
     let tmp = tags_dir.join(format!(
         "{PARTIAL}{tag}-{}",
         crate::identity::random_token()
@@ -357,13 +465,25 @@ pub async fn fetch(tags_dir: &Path, tag: &str, from: &FetchFrom) -> Result<u64> 
 
     match result {
         Ok(total) => {
-            let dest = tags_dir.join(tag);
-            match std::fs::rename(&tmp, &dest) {
-                Ok(()) => Ok(total),
-                // Another fetch of the same tag finished first; its copy is
-                // as good as this one.
+            if let Err(e) = seal(&tmp, tag, &from.snapshot_id) {
+                std::fs::remove_dir_all(&tmp).ok();
+                return Err(e);
+            }
+            let _publishing = PUBLISHING.lock();
+            if dest.exists() {
+                std::fs::remove_dir_all(&tmp).ok();
+                image_path(tags_dir, tag, &from.snapshot_id)?;
+                return Ok(total);
+            }
+            match super::runtime::publish(&tmp, &dest) {
+                Ok(()) => {
+                    image_path(tags_dir, tag, &from.snapshot_id)?;
+                    Ok(total)
+                }
+                // A concurrent publisher is usable only if it has this exact identity.
                 Err(_) if dest.is_dir() => {
                     std::fs::remove_dir_all(&tmp).ok();
+                    image_path(tags_dir, tag, &from.snapshot_id)?;
                     Ok(total)
                 }
                 Err(e) => {
@@ -380,6 +500,38 @@ pub async fn fetch(tags_dir: &Path, tag: &str, from: &FetchFrom) -> Result<u64> 
 }
 
 // ---- what this node holds ------------------------------------------------------
+
+/// Versioned images, reported separately so delayed cleanup names an exact snapshot.
+pub fn held_versions(tags_dir: &Path, min_age: Duration) -> Vec<TagVersion> {
+    let Ok(rd) = std::fs::read_dir(tags_dir.join(VERSIONS)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in rd.filter_map(|e| e.ok()) {
+        let Ok(marker) = std::fs::read(entry.path().join(VERSION)) else {
+            continue;
+        };
+        let Ok(version) = serde_json::from_slice::<TagVersion>(&marker) else {
+            continue;
+        };
+        if entry.file_name().to_string_lossy() != version.snapshot_id
+            || image_path(tags_dir, &version.tag, &version.snapshot_id).is_err()
+        {
+            continue;
+        }
+        let old_enough = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age >= min_age);
+        if old_enough {
+            out.push(version);
+        }
+    }
+    out.sort_by(|a, b| (&a.tag, &a.snapshot_id).cmp(&(&b.tag, &b.snapshot_id)));
+    out
+}
 
 /// Tags whose images are in `tags_dir` and at least `min_age` old.
 pub fn held(tags_dir: &Path, min_age: Duration) -> Vec<String> {
@@ -425,6 +577,10 @@ mod tests {
     async fn source(tags_dir: PathBuf, pki: &Path) -> (String, super::super::AgentIdentity) {
         let id = super::super::AgentIdentity::load_or_create(pki).unwrap();
         let app = routes(tags_dir, id.secret.clone());
+        (listen(app, &id), id)
+    }
+
+    fn listen(app: Router, id: &super::super::AgentIdentity) -> String {
         let tls = crate::tls::plain_server_config(&id.cert_pem, &id.key_pem).unwrap();
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         l.set_nonblocking(true).unwrap();
@@ -439,19 +595,55 @@ mod tests {
             .await
             .ok();
         });
-        (addr, id)
+        addr
     }
 
     fn from(addr: &str, id: &super::super::AgentIdentity, tag: &str, for_node: &str) -> FetchFrom {
+        from_version(addr, id, tag, &format!("legacy-{tag}"), for_node)
+    }
+
+    fn from_version(
+        addr: &str,
+        id: &super::super::AgentIdentity,
+        tag: &str,
+        snapshot_id: &str,
+        for_node: &str,
+    ) -> FetchFrom {
         let expires = crate::tag::fetch_expiry(crate::state::now_secs());
         FetchFrom {
             node_id: "src".into(),
+            snapshot_id: snapshot_id.into(),
             address: addr.into(),
             cert_sha256: id.fingerprint.clone(),
             for_node: for_node.into(),
             expires,
-            token: crate::tag::fetch_token(&id.secret, tag, for_node, expires),
+            token: crate::tag::fetch_snapshot_token(
+                &id.secret,
+                tag,
+                snapshot_id,
+                for_node,
+                expires,
+            ),
         }
+    }
+
+    fn version(tags: &Path, tag: &str, id: &str, contents: &[u8]) -> PathBuf {
+        let path = version_path(tags, tag, id).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("checkpoint.img"), contents).unwrap();
+        seal(&path, tag, id).unwrap();
+        path
+    }
+
+    async fn ready(fetches: &Arc<Fetches>, tags: &Path, tag: &str, from: &FetchFrom) -> PathBuf {
+        for _ in 0..200 {
+            match fetches.ensure(tags, tag, from) {
+                Status::Ready => return image_path(tags, tag, &from.snapshot_id).unwrap(),
+                Status::Failed(e) => panic!("{e}"),
+                Status::Pending => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+        panic!("snapshot {} never arrived", from.snapshot_id);
     }
 
     fn image(dir: &Path) {
@@ -469,19 +661,35 @@ mod tests {
         let (addr, id) = source(src.path().join("tags"), &src.path().join("pki")).await;
 
         let tags = dst.path().join("tags");
-        let bytes = fetch(&tags, "py-base", &from(&addr, &id, "py-base", "f5"))
-            .await
-            .unwrap();
+        let f = from(&addr, &id, "py-base", "f5");
+        let bytes = fetch(&tags, "py-base", &f).await.unwrap();
         assert_eq!(bytes, 3_000_005);
         for f in ["checkpoint.img", "pages.img"] {
             assert_eq!(
-                std::fs::read(tags.join("py-base").join(f)).unwrap(),
-                std::fs::read(src.path().join("tags/py-base").join(f)).unwrap(),
+                std::fs::read(
+                    image_path(&tags, "py-base", "legacy-py-base")
+                        .unwrap()
+                        .join(f)
+                )
+                .unwrap(),
+                std::fs::read(
+                    image_path(&src.path().join("tags"), "py-base", "legacy-py-base")
+                        .unwrap()
+                        .join(f)
+                )
+                .unwrap(),
                 "{f} differs"
             );
         }
         // Nothing half-written is left beside it.
-        assert_eq!(held(&tags, Duration::ZERO), vec!["py-base".to_string()]);
+        assert!(held(&tags, Duration::ZERO).is_empty());
+        assert_eq!(
+            held_versions(&tags, Duration::ZERO),
+            vec![TagVersion {
+                tag: "py-base".into(),
+                snapshot_id: "legacy-py-base".into(),
+            }]
+        );
         assert_eq!(std::fs::read_dir(&tags).unwrap().count(), 1);
     }
 
@@ -498,12 +706,23 @@ mod tests {
         let e = fetch(&tags, "secret-tag", &f).await.unwrap_err();
         assert!(format!("{e:#}").contains("401"), "{e:#}");
 
+        f = from(&addr, &id, "py-base", "f5");
+        f.snapshot_id = "another-version".into();
+        let e = fetch(&tags, "py-base", &f).await.unwrap_err();
+        assert!(format!("{e:#}").contains("401"), "{e:#}");
+
         // Nor does one minted for another node, or with another secret.
         f = from(&addr, &id, "py-base", "f7");
         f.for_node = "f5".into();
         assert!(fetch(&tags, "py-base", &f).await.is_err());
         f = from(&addr, &id, "py-base", "f5");
-        f.token = crate::tag::fetch_token("not-the-secret", "py-base", "f5", f.expires);
+        f.token = crate::tag::fetch_snapshot_token(
+            "not-the-secret",
+            "py-base",
+            &f.snapshot_id,
+            "f5",
+            f.expires,
+        );
         assert!(fetch(&tags, "py-base", &f).await.is_err());
 
         // And a server presenting another certificate is not talked to.
@@ -536,6 +755,188 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("the fetch never landed");
+    }
+
+    #[tokio::test]
+    async fn a_rebuilt_tag_on_the_same_source_uses_new_contents_and_then_hits_cache() {
+        let (src, dst) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let source_tags = src.path().join("tags");
+        version(&source_tags, "release", "first", b"old");
+        version(&source_tags, "release", "second", b"new");
+        let (addr, id) = source(source_tags, &src.path().join("pki")).await;
+        let tags = dst.path().join("tags");
+        let fetches = Arc::new(Fetches::default());
+        let first = from_version(&addr, &id, "release", "first", "b");
+        let mut second = from_version(&addr, &id, "release", "second", "b");
+        let old = ready(&fetches, &tags, "release", &first).await;
+        assert_eq!(std::fs::read(old.join("checkpoint.img")).unwrap(), b"old");
+        let new = ready(&fetches, &tags, "release", &second).await;
+        assert_eq!(std::fs::read(new.join("checkpoint.img")).unwrap(), b"new");
+
+        // A dead source proves that this version no longer needs the network.
+        second.address = "127.0.0.1:1".into();
+        assert_eq!(fetches.ensure(&tags, "release", &second), Status::Ready);
+        assert!(fetches.state.lock().is_empty());
+        assert_eq!(fetch(&tags, "release", &second).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_unversioned_remote_cache_is_replaced_without_adopting_it() {
+        let (src, dst) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let source_tags = src.path().join("tags");
+        std::fs::create_dir_all(source_tags.join("release")).unwrap();
+        std::fs::write(source_tags.join("release/checkpoint.img"), b"new").unwrap();
+        let (addr, id) = source(source_tags.clone(), &src.path().join("pki")).await;
+        let tags = dst.path().join("tags");
+        std::fs::create_dir_all(tags.join("release")).unwrap();
+        std::fs::write(tags.join("release/checkpoint.img"), b"old").unwrap();
+        let from = from(&addr, &id, "release", "b");
+        let fetches = Arc::new(Fetches::default());
+        assert_eq!(fetches.ensure(&tags, "release", &from), Status::Pending);
+        let restored = ready(&fetches, &tags, "release", &from).await;
+        assert_eq!(
+            std::fs::read(restored.join("checkpoint.img")).unwrap(),
+            b"new"
+        );
+        // The authoritative pre-upgrade source survives adoption and still serves the image.
+        assert_eq!(
+            std::fs::read(
+                source_image(&source_tags, "release", &from.snapshot_id)
+                    .unwrap()
+                    .join("checkpoint.img")
+            )
+            .unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(tags.join("release/checkpoint.img")).unwrap(),
+            b"old"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_old_transfer_finishing_last_cannot_replace_the_new_snapshot() {
+        for occupied_destination in [false, true] {
+            let (src, dst) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+            let source_tags = src.path().join("tags");
+            version(&source_tags, "release", "first", b"old");
+            version(&source_tags, "release", "second", b"new");
+            let id = super::super::AgentIdentity::load_or_create(&src.path().join("pki")).unwrap();
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let app = routes(source_tags, id.secret.clone()).layer(axum::middleware::from_fn({
+                let (entered, release) = (entered.clone(), release.clone());
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let (entered, release) = (entered.clone(), release.clone());
+                    async move {
+                        if request.uri().path().ends_with("/files/checkpoint.img")
+                            && request
+                                .headers()
+                                .get(SNAPSHOT_ID)
+                                .is_some_and(|id| id == "first")
+                        {
+                            entered.notify_one();
+                            release.notified().await;
+                        }
+                        next.run(request).await
+                    }
+                }
+            }));
+            let addr = listen(app, &id);
+            let first = from_version(&addr, &id, "release", "first", "b");
+            let second = from_version(&addr, &id, "release", "second", "b");
+            let tags = dst.path().join("tags");
+            let fetches = Arc::new(Fetches::default());
+            assert_eq!(fetches.ensure(&tags, "release", &first), Status::Pending);
+            tokio::time::timeout(Duration::from_secs(5), entered.notified())
+                .await
+                .unwrap();
+
+            let new = ready(&fetches, &tags, "release", &second).await;
+            assert_eq!(std::fs::read(new.join("checkpoint.img")).unwrap(), b"new");
+            assert!(!version_path(&tags, "release", "first").unwrap().exists());
+            if occupied_destination {
+                let wrong = version_path(&tags, "release", "first").unwrap();
+                std::fs::create_dir_all(&wrong).unwrap();
+                std::fs::write(wrong.join("checkpoint.img"), b"unrelated").unwrap();
+                seal(&wrong, "release", "unrelated").unwrap();
+            }
+            release.notify_one();
+            if occupied_destination {
+                let failed = tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        match fetches.ensure(&tags, "release", &first) {
+                            Status::Failed(e) => break e,
+                            Status::Ready => panic!("a different identity was accepted"),
+                            Status::Pending => tokio::time::sleep(Duration::from_millis(10)).await,
+                        }
+                    }
+                })
+                .await
+                .unwrap();
+                assert!(failed.contains("different snapshot"), "{failed}");
+                assert_eq!(
+                    std::fs::read(
+                        version_path(&tags, "release", "first")
+                            .unwrap()
+                            .join("checkpoint.img")
+                    )
+                    .unwrap(),
+                    b"unrelated"
+                );
+            } else {
+                let old = ready(&fetches, &tags, "release", &first).await;
+                assert_eq!(std::fs::read(old.join("checkpoint.img")).unwrap(), b"old");
+            }
+            assert_eq!(
+                std::fs::read(
+                    image_path(&tags, "release", "second")
+                        .unwrap()
+                        .join("checkpoint.img")
+                )
+                .unwrap(),
+                b"new"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_new_transfer_cannot_fall_back_to_the_old_snapshot() {
+        let (src, dst) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let source_tags = src.path().join("tags");
+        version(&source_tags, "release", "first", b"old");
+        let (addr, id) = source(source_tags, &src.path().join("pki")).await;
+        let tags = dst.path().join("tags");
+        let fetches = Arc::new(Fetches::default());
+        let old = from_version(&addr, &id, "release", "first", "b");
+        ready(&fetches, &tags, "release", &old).await;
+        let missing = from_version(&addr, &id, "release", "second", "b");
+        assert!(fetch(&tags, "release", &missing).await.is_err());
+        assert!(image_path(&tags, "release", "second").is_err());
+        assert_eq!(
+            std::fs::read(
+                image_path(&tags, "release", "first")
+                    .unwrap()
+                    .join("checkpoint.img")
+            )
+            .unwrap(),
+            b"old"
+        );
+        assert_ne!(fetches.ensure(&tags, "release", &missing), Status::Ready);
+    }
+
+    #[tokio::test]
+    async fn an_existing_destination_must_have_the_requested_identity() {
+        let dst = tempfile::tempdir().unwrap();
+        let tags = dst.path().join("tags");
+        let wrong = version_path(&tags, "release", "requested").unwrap();
+        std::fs::create_dir_all(&wrong).unwrap();
+        std::fs::write(wrong.join("checkpoint.img"), b"old").unwrap();
+        seal(&wrong, "release", "another").unwrap();
+        let id = super::super::AgentIdentity::load_or_create(&dst.path().join("pki")).unwrap();
+        let from = from_version("127.0.0.1:1", &id, "release", "requested", "b");
+        assert!(fetch(&tags, "release", &from).await.is_err());
+        assert_eq!(std::fs::read(wrong.join("checkpoint.img")).unwrap(), b"old");
     }
 
     #[tokio::test]

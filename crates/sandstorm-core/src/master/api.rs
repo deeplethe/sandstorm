@@ -2283,6 +2283,7 @@ async fn branch_sandbox(
             .push_back(Command::Branch {
                 id: id.clone(),
                 tag: req.tag.clone(),
+                snapshot_id: result_id.clone(),
                 result_id: result_id.clone(),
             });
     }
@@ -2310,6 +2311,7 @@ async fn branch_sandbox(
     // from this tag cannot race ahead of it.
     let snap = SnapshotTag {
         tag: req.tag,
+        snapshot_id: result_id,
         node_id,
         template,
         from_sandbox: Some(id),
@@ -2319,6 +2321,17 @@ async fn branch_sandbox(
     };
     {
         let store = st.store();
+        // Another branch may have claimed the name while this node wrote its image.
+        if store
+            .get_snapshot(&snap.tag)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .is_some()
+        {
+            return Err(err(
+                StatusCode::CONFLICT,
+                format!("snapshot {} already exists", snap.tag),
+            ));
+        }
         store
             .put_snapshot(&snap)
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2603,7 +2616,7 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
     let mut commands = pulls_for(&store, req)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     // Where each tag forked here comes from, looked up once per diff.
-    let mut sources: HashMap<String, Option<FetchFrom>> = HashMap::new();
+    let mut sources: HashMap<String, (Option<String>, Option<FetchFrom>)> = HashMap::new();
     for want in &desired {
         // Quarantined: keep it in desired state and visible, but stop asking
         // the node to do something that has failed MAX_FAILURES times.
@@ -2644,7 +2657,7 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
                         continue;
                     }
                 };
-                let fetch = match want.from_tag.as_deref() {
+                let (snapshot_id, fetch) = match want.from_tag.as_deref() {
                     Some(tag) => match sources.get(tag) {
                         Some(f) => f.clone(),
                         None => {
@@ -2653,7 +2666,7 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
                             f
                         }
                     },
-                    None => None,
+                    None => (None, None),
                 };
                 commands.push(Command::Create {
                     id: want.id.clone(),
@@ -2663,6 +2676,7 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
                     volume: want.volume.clone(),
                     net_index: want.net_index,
                     from_tag: want.from_tag.clone(),
+                    snapshot_id,
                     gateway_port: want.gateway_port,
                     token: want.token.clone(),
                     fetch: fetch.map(Box::new),
@@ -2709,38 +2723,71 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
             .is_none()
         {
-            commands.push(Command::DropTag { tag: tag.clone() });
+            commands.push(Command::DropTag {
+                tag: tag.clone(),
+                snapshot_id: None,
+            });
+        }
+    }
+    for version in &req.tag_versions {
+        let current = store
+            .get_snapshot(&version.tag)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if current.is_none_or(|snap| snap.snapshot_id != version.snapshot_id) {
+            commands.push(Command::DropTag {
+                tag: version.tag.clone(),
+                snapshot_id: Some(version.snapshot_id.clone()),
+            });
         }
     }
     Ok(commands)
 }
 
-/// Where `node` fetches `tag`'s image from, when it is not the node that
-/// baked it.
+/// The immutable version of `tag`, and where `node` fetches its image from.
 ///
-/// `None` when the image is on `node` already, or when the node that has it
-/// is one the master cannot reach -- a node that dials in has no address --
-/// in which case placement keeps forks of the tag on that node.
-fn fetch_from(store: &Store, tag: &str, node: &str) -> Result<Option<FetchFrom>, ApiErr> {
+/// Only the authoritative source gets no fetch. Missing records or a
+/// remote source without an address must never authorize local legacy adoption.
+fn fetch_from(
+    store: &Store,
+    tag: &str,
+    node: &str,
+) -> Result<(Option<String>, Option<FetchFrom>), ApiErr> {
     let ise = |e: anyhow::Error| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
     let Some(snap) = store.get_snapshot(tag).map_err(ise)? else {
-        return Ok(None);
+        return Err(err(StatusCode::NOT_FOUND, format!("no snapshot {tag}")));
     };
+    let snapshot_id = Some(snap.snapshot_id.clone());
     if snap.node_id == node {
-        return Ok(None);
+        return Ok((snapshot_id, None));
     }
     let Some(src) = store.agent_node(&snap.node_id).map_err(ise)? else {
-        return Ok(None);
+        return Err(err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "source node {} for snapshot {tag} has no agent address",
+                snap.node_id
+            ),
+        ));
     };
     let expires = crate::tag::fetch_expiry(now_secs());
-    Ok(Some(FetchFrom {
-        token: crate::tag::fetch_token(&src.secret, tag, node, expires),
-        node_id: src.id,
-        address: src.address,
-        cert_sha256: src.cert_sha256,
-        for_node: node.to_string(),
-        expires,
-    }))
+    Ok((
+        snapshot_id,
+        Some(FetchFrom {
+            token: crate::tag::fetch_snapshot_token(
+                &src.secret,
+                tag,
+                &snap.snapshot_id,
+                node,
+                expires,
+            ),
+            snapshot_id: snap.snapshot_id,
+            node_id: src.id,
+            address: src.address,
+            cert_sha256: src.cert_sha256,
+            for_node: node.to_string(),
+            expires,
+        }),
+    ))
 }
 
 // ---- sandboxes ----------------------------------------------------------
@@ -3866,9 +3913,39 @@ async fn list_templates(State(st): State<St>) -> Result<Json<Vec<String>>, ApiEr
 }
 
 #[cfg(test)]
-mod deferred_tests {
+mod tests {
     use super::*;
     use crate::proto::Deferred;
+
+    #[test]
+    fn missing_snapshot_or_remote_source_never_authorizes_a_local_restore() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(
+            fetch_from(&store, "release", "b").unwrap_err().0,
+            StatusCode::NOT_FOUND
+        );
+        store
+            .put_snapshot(&SnapshotTag {
+                tag: "release".into(),
+                snapshot_id: "legacy-current".into(),
+                node_id: "a".into(),
+                template: "app".into(),
+                from_sandbox: None,
+                created_at: now_secs(),
+                size_bytes: 1,
+                port: None,
+            })
+            .unwrap();
+        // No transfer is correct only on the authoritative source itself.
+        assert_eq!(
+            fetch_from(&store, "release", "a").unwrap(),
+            (Some("legacy-current".into()), None)
+        );
+        assert_eq!(
+            fetch_from(&store, "release", "b").unwrap_err().0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
 
     fn destroy(id: &str) -> Command {
         Command::Destroy {

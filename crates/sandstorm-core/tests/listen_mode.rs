@@ -118,6 +118,7 @@ async fn fake_sync(
             evicted: vec![],
             features: vec![],
             tags: vec![],
+            tag_versions: vec![],
             host: None,
             fingerprint: None,
             templates: None,
