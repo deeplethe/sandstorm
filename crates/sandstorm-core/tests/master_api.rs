@@ -559,6 +559,53 @@ mod id_reuse {
     }
 
     #[tokio::test]
+    async fn deleting_detached_sandbox_retries_destroy_until_acknowledged() {
+        let h = start().await;
+        register(&h, "N", "default").await;
+        put_template(&h, "A").await;
+        let (status, original) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let old_token = original["token"].as_str().unwrap();
+        report(&h, "N", observed_demo(old_token), serde_json::json!([])).await;
+
+        let detached = reqwest::Client::new()
+            .post(format!("{}/v1/sandboxes/demo/tier", h.base))
+            .json(&serde_json::json!({ "tier": "detached" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(detached.status(), 200);
+        let detached: serde_json::Value = detached.json().await.unwrap();
+        assert_eq!(detached["tier"], "detached");
+        assert!(
+            report(&h, "N", serde_json::json!([]), serde_json::json!([]))
+                .await
+                .commands
+                .is_empty()
+        );
+
+        delete_demo(&h).await;
+        // Detached archives are invisible to observe; only a completion
+        // receipt proves that Destroy removed them, including after a retry.
+        for _ in 0..2 {
+            let response = report(&h, "N", serde_json::json!([]), serde_json::json!([])).await;
+            let (status, body) = create(&h, "demo", "A").await;
+            assert!(
+                matches!(response.commands.as_slice(),
+                    [Command::Destroy { id, token, .. }] if id == "demo" && token == old_token),
+                "empty report after detached DELETE: {:?}; ID reuse returned {status}",
+                response.commands
+            );
+            assert_cleanup_conflict(status, &body);
+        }
+
+        report(&h, "N", serde_json::json!([]), destroyed_demo(old_token)).await;
+        let (status, replacement) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        assert_ne!(replacement["token"], original["token"]);
+    }
+
+    #[tokio::test]
     async fn cleanup_survives_a_master_restart_and_a_disconnected_node() {
         let (h, state, server) = start_with_state(TempDir::new().unwrap()).await;
         register(&h, "N", "default").await;

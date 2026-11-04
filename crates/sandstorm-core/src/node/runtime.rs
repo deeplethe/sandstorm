@@ -2193,6 +2193,9 @@ mod backend_tests {
             let b = cfg.work_dir.join("bundles").join(req.id);
             std::fs::create_dir_all(&b)?;
             std::fs::write(b.join("config.json"), "{}")?;
+            if let Some(archive) = req.restore_from {
+                self.log(format!("unpack {}", archive.display()));
+            }
             self.log(format!("prepare {}", req.id));
             Ok(b)
         }
@@ -2354,6 +2357,104 @@ mod backend_tests {
             matches!(run_one(&cfg, &runtime, &mut failing, &wake, &command, Instant::now()), Step::Answered(result) if result.exit_code == 0)
         );
         assert_eq!(*recorder.0.lock(), ["exec id-reuse-test true"]);
+    }
+
+    fn destroy_detached_archive(fail_first: bool) {
+        let directory = TempDir::new().unwrap();
+        let cfg = RuntimeConfig {
+            // There is no running instance; filesystem cleanup uses the real backend.
+            runsc: "/bin/false".into(),
+            runsc_root: directory.path().join("runsc"),
+            work_dir: directory.path().join("work"),
+            volume_root: directory.path().join("volumes"),
+            ..Default::default()
+        };
+        let runtime = Runtime::new(cfg.clone()).unwrap();
+        let id = "detached-cleanup-test";
+        let archive = runtime.archive_path(id);
+        let archive_dir = archive.parent().unwrap();
+        let workspace = cfg.volume_root.join(id).join("workspace/user.txt");
+        std::fs::create_dir_all(archive_dir).unwrap();
+        std::fs::write(&archive, b"old archived layer").unwrap();
+        std::fs::create_dir_all(workspace.parent().unwrap()).unwrap();
+        std::fs::write(&workspace, b"user data must survive\n").unwrap();
+        assert!(!cfg.work_dir.join("bundles").join(id).exists());
+        assert!(runtime.observe().unwrap().is_empty());
+
+        if fail_first {
+            // A file in place of the directory fails even when tests run as root.
+            let parked = directory.path().join("parked-archive");
+            std::fs::rename(archive_dir, &parked).unwrap();
+            std::fs::write(archive_dir, b"blocks archive cleanup").unwrap();
+            let error = runtime.destroy_instance(id, None, "old-token").unwrap_err();
+            assert!(format!("{error:#}").contains("removing the sandbox archive"));
+            assert!(runtime.take_destroyed().is_empty());
+            assert!(!runtime.retired_path(id, "old-token").exists());
+            assert_eq!(
+                std::fs::read(&workspace).unwrap(),
+                b"user data must survive\n"
+            );
+            assert_eq!(
+                std::fs::read(parked.join("layer.tar.zst")).unwrap(),
+                b"old archived layer"
+            );
+            std::fs::remove_file(archive_dir).unwrap();
+            std::fs::rename(parked, archive_dir).unwrap();
+        }
+
+        assert!(runtime.destroy_instance(id, None, "old-token").unwrap());
+        assert!(!archive_dir.exists());
+        assert_eq!(
+            std::fs::read(&workspace).unwrap(),
+            b"user data must survive\n"
+        );
+        assert!(runtime.retired_path(id, "old-token").exists());
+        let receipts = runtime.take_destroyed();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].id, id);
+        assert_eq!(receipts[0].token, "old-token");
+
+        // Only sandbox boot is simulated: create must not select the old archive.
+        let recorder = Arc::new(Recorder::default());
+        let runtime = Runtime::with_backend(cfg, recorder.clone()).unwrap();
+        std::fs::create_dir_all(runtime.config().work_dir.join("templates/py/rootfs")).unwrap();
+        runtime
+            .create(&CreateRequest {
+                id,
+                template: "py",
+                spec: &serde_json::json!({"args": ["true"]}),
+                port: 8080,
+                volume: None,
+                net_index: None,
+                from_tag: None,
+                gateway_port: None,
+                token: "new-token",
+                egress: &Default::default(),
+            })
+            .unwrap();
+        assert_eq!(
+            *recorder.0.lock(),
+            [format!("prepare {id}"), format!("boot {id}")]
+        );
+        assert_eq!(
+            runtime.sandbox_token(id).unwrap().as_deref(),
+            Some("new-token")
+        );
+        assert!(!archive.exists());
+        assert_eq!(
+            std::fs::read(&workspace).unwrap(),
+            b"user data must survive\n"
+        );
+    }
+
+    #[test]
+    fn detached_destroy_removes_only_the_internal_archive_before_acknowledging() {
+        destroy_detached_archive(false);
+    }
+
+    #[test]
+    fn detached_archive_cleanup_failure_is_not_acknowledged_until_retry() {
+        destroy_detached_archive(true);
     }
 
     #[test]
