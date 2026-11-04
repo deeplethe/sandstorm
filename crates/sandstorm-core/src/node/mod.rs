@@ -22,19 +22,21 @@ mod reclaim;
 mod runtime;
 mod starting;
 mod switch;
-mod tags;
+pub mod tags;
 mod wake;
 
 pub use agent::{serve_listen, Identity as AgentIdentity};
 pub use backend::{Backend, Runsc};
-pub use bundle::TemplateSpec;
+pub use bundle::{BuildRequest, TemplateSpec};
 pub use gateway::{Exposed, Gateway, PORT_HEADER};
 pub use host::{
     bootstrap_compressed_swap, compressed_swap, decide_compression, decide_reclaim,
     default_netns_pool, pin_in_zswap, Lever,
 };
 pub use net::NetConfig;
-pub use runtime::{preflight, BackendKind, Runtime, RuntimeConfig, WARM_SEED_PREFIX};
+pub use runtime::{
+    preflight, BackendKind, CreateRequest, Runtime, RuntimeConfig, WARM_SEED_PREFIX,
+};
 pub use switch::{read as read_backend_file, write as write_backend_file, RESTART_EXIT};
 pub use tags::Fetches;
 pub use wake::Wakeups;
@@ -627,6 +629,7 @@ async fn report_wakes(
             evicted: wake.recently_evicted(Instant::now()),
             features: Vec::new(),
             tags: Vec::new(),
+            tag_versions: Vec::new(),
             host: None,
             fingerprint: None,
             templates: None,
@@ -769,6 +772,7 @@ async fn report(
         evicted: wake.recently_evicted(Instant::now()),
         features: cfg.features.clone(),
         tags: tags::held(&rt.tags_dir(), tags::REPORT_MIN_AGE),
+        tag_versions: tags::held_versions(&rt.tags_dir(), tags::REPORT_MIN_AGE),
         host: Some(rt.host()),
         fingerprint: Some(rt.fingerprint()),
         templates: Some(rt.templates()),
@@ -875,29 +879,42 @@ fn run_one(
             id: sb,
             tag,
             result_id,
+            snapshot_id,
         } => {
-            return Step::Answered(match run_active(wake, sb, || rt.branch(sb, tag)) {
-                Ok(size_bytes) => CommandResult {
-                    result_id: result_id.clone(),
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 0,
-                    size_bytes,
+            return Step::Answered(
+                match run_active(wake, sb, || {
+                    if snapshot_id.is_empty() {
+                        rt.branch(sb, tag)
+                    } else {
+                        rt.branch_snapshot(sb, tag, snapshot_id)
+                    }
+                }) {
+                    Ok(size_bytes) => CommandResult {
+                        result_id: result_id.clone(),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: 0,
+                        size_bytes,
+                    },
+                    Err(e) => CommandResult {
+                        result_id: result_id.clone(),
+                        stdout: String::new(),
+                        stderr: format!("sandstorm: {e:#}\n"),
+                        exit_code: -1,
+                        size_bytes: 0,
+                    },
                 },
-                Err(e) => CommandResult {
-                    result_id: result_id.clone(),
-                    stdout: String::new(),
-                    stderr: format!("sandstorm: {e:#}\n"),
-                    exit_code: -1,
-                    size_bytes: 0,
-                },
-            })
+            )
         }
         // Housekeeping the master asks for, not work on a sandbox: nothing
         // waits on it and a failure is retried by the next report, which
         // will still list the tag.
-        Command::DropTag { tag } => {
-            if let Err(e) = rt.drop_tag(tag) {
+        Command::DropTag { tag, snapshot_id } => {
+            let removed = match snapshot_id {
+                Some(snapshot_id) => rt.drop_snapshot_tag(tag, snapshot_id),
+                None => rt.drop_tag(tag),
+            };
+            if let Err(e) = removed {
                 tracing::warn!(%tag, error = %format!("{e:#}"), "could not drop a tag");
             }
             return Step::Done;
@@ -978,6 +995,7 @@ fn run_one(
                 volume,
                 net_index,
                 from_tag,
+                snapshot_id,
                 gateway_port,
                 token,
                 fetch,
@@ -988,7 +1006,24 @@ fn run_one(
                 // runs on its own; until it lands, offer the command again
                 // shortly, without counting a failure.
                 let image = match (from_tag.as_deref(), fetch) {
-                    (Some(tag), Some(from)) => cfg.fetches.ensure(&rt.tags_dir(), tag, from),
+                    (Some(tag), Some(from)) => {
+                        if snapshot_id.as_deref() != Some(from.snapshot_id.as_str()) {
+                            tags::Status::Failed(
+                                "snapshot identity differs from transfer source".into(),
+                            )
+                        } else {
+                            cfg.fetches.ensure(&rt.tags_dir(), tag, from)
+                        }
+                    }
+                    (Some(tag), None) => match snapshot_id.as_deref() {
+                        Some(snapshot_id) => {
+                            match tags::source_image(&rt.tags_dir(), tag, snapshot_id) {
+                                Ok(_) => tags::Status::Ready,
+                                Err(error) => tags::Status::Failed(format!("{error:#}")),
+                            }
+                        }
+                        None => tags::Status::Ready,
+                    },
                     _ => tags::Status::Ready,
                 };
                 match image {
@@ -1005,6 +1040,7 @@ fn run_one(
                         volume: volume.as_deref(),
                         net_index: *net_index,
                         from_tag: from_tag.as_deref(),
+                        snapshot_id: snapshot_id.as_deref(),
                         gateway_port: *gateway_port,
                         token,
                         egress,
@@ -1317,7 +1353,7 @@ pub(crate) fn command_id(cmd: &Command) -> &str {
         | Command::Destroy { id, .. }
         | Command::Branch { id, .. }
         | Command::Exec { id, .. } => id,
-        Command::DropTag { tag } => tag,
+        Command::DropTag { tag, .. } => tag,
         Command::PullTemplate { name, .. } => name,
         Command::SetBackend { result_id, .. } => result_id,
     }
@@ -1338,6 +1374,7 @@ mod tests {
             volume: None,
             net_index: None,
             from_tag: None,
+            snapshot_id: None,
             gateway_port: None,
             token: String::new(),
             fetch: None,
@@ -1658,6 +1695,7 @@ mod wake_tests {
                         id: id.into(),
                         tag: "copy".into(),
                         result_id: "result".into(),
+                        snapshot_id: "snapshot-copy".into(),
                     }
                 };
                 run_one(
@@ -1985,6 +2023,7 @@ mod wake_tests {
             volume: None,
             net_index: None,
             from_tag: None,
+            snapshot_id: None,
             gateway_port: None,
             token: String::new(),
             fetch: None,
@@ -1994,7 +2033,10 @@ mod wake_tests {
 
     #[test]
     fn a_run_of_creates_goes_together_and_anything_else_alone() {
-        let drop_tag = || Command::DropTag { tag: "t".into() };
+        let drop_tag = || Command::DropTag {
+            tag: "t".into(),
+            snapshot_id: None,
+        };
         let batch = [
             create("a", 64),
             create("b", 64),
@@ -2138,10 +2180,12 @@ mod wake_tests {
             volume: None,
             net_index: Some(1),
             from_tag: Some("t".into()),
+            snapshot_id: Some("snapshot-t".into()),
             gateway_port: None,
             token: String::new(),
             fetch: Some(Box::new(crate::proto::FetchFrom {
                 node_id: "src".into(),
+                snapshot_id: "snapshot-t".into(),
                 address: address.into(),
                 cert_sha256: "00".repeat(32),
                 for_node: "n1".into(),
@@ -2191,7 +2235,10 @@ mod wake_tests {
         std::fs::create_dir_all(rt.tags_dir().join("old")).unwrap();
         std::fs::write(rt.tags_dir().join("old/pages.img"), b"x").unwrap();
 
-        let cmd = Command::DropTag { tag: "old".into() };
+        let cmd = Command::DropTag {
+            tag: "old".into(),
+            snapshot_id: None,
+        };
         assert!(matches!(
             run_one(&cfg, &rt, &mut failing, &w, &cmd, Instant::now()),
             Step::Done

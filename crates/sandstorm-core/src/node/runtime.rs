@@ -36,6 +36,8 @@ pub struct CreateRequest<'a> {
     pub net_index: Option<u32>,
     /// Fork from this tag's checkpoint rather than starting cold.
     pub from_tag: Option<&'a str>,
+    /// The immutable creation of `from_tag` to restore.
+    pub snapshot_id: Option<&'a str>,
     /// Host port the gateway should listen on, and the token it checks.
     /// Both are written into the bundle so a node restart re-adopts the
     /// sandbox with its gateway intact -- otherwise the port would come
@@ -698,6 +700,7 @@ impl Runtime {
             volume,
             net_index,
             from_tag,
+            snapshot_id,
             gateway_port,
             token,
             egress,
@@ -829,7 +832,12 @@ impl Runtime {
             // number of children, so nothing is copied -- measured on bm,
             // five children from one 14 MiB image in 226 ms.
             Some(tag) => {
-                let image = self.tag_path(tag)?;
+                let image = match snapshot_id {
+                    Some(snapshot_id) => {
+                        super::tags::image_path(&self.tags_dir(), tag, snapshot_id)?
+                    }
+                    None => self.tag_path(tag)?,
+                };
                 if !image.is_dir() {
                     bail!("tag {tag} is not on this node (no {})", image.display());
                 }
@@ -900,6 +908,18 @@ impl Runtime {
     /// a second. A live fork with no pause is an RFC non-goal.
     pub fn branch(&self, id: &str, tag: &str) -> Result<u64> {
         let image = self.tag_path(tag)?;
+        self.branch_into(id, tag, &image)
+    }
+
+    /// Write a new creation without reusing the tag's previous image path.
+    pub fn branch_snapshot(&self, id: &str, tag: &str, snapshot_id: &str) -> Result<u64> {
+        let image = super::tags::version_path(&self.tags_dir(), tag, snapshot_id)?;
+        let size = self.branch_into(id, tag, &image)?;
+        super::tags::seal(&image, tag, snapshot_id)?;
+        Ok(size)
+    }
+
+    fn branch_into(&self, id: &str, tag: &str, image: &Path) -> Result<u64> {
         if image.exists() {
             bail!("tag {tag} already exists");
         }
@@ -911,7 +931,7 @@ impl Runtime {
 
         // Thaw first if frozen: checkpointing a frozen task set hangs.
         let _ = self.freeze(id, false);
-        self.checkpoint_into(id, &image, false)
+        self.checkpoint_into(id, image, false)
             .with_context(|| format!("checkpointing {id} into tag {tag}"))?;
 
         // Where the engine can, the parent just carries on. Otherwise, or if
@@ -919,7 +939,7 @@ impl Runtime {
         // its address reapplied first.
         let resumed = self
             .engine
-            .resume_after_checkpoint(id, &image)
+            .resume_after_checkpoint(id, image)
             .unwrap_or_else(|e| {
                 tracing::warn!(%id, error = %format!("{e:#}"), "could not resume after branching; restoring");
                 false
@@ -928,14 +948,14 @@ impl Runtime {
             self.engine.remove(id);
             let restored = self
                 .ensure_net(id)
-                .and_then(|()| self.engine.restore(id, &bundle, &image));
+                .and_then(|()| self.engine.restore(id, &bundle, image));
             if let Err(error) = restored {
                 // The tag is not registered after a failed branch. Keep its
                 // sealed image where reconciliation can find the parent.
                 let snapshot = self.cfg.work_dir.join("snapshots").join(id);
                 self.drop_snapshot(id);
                 clear_attempts(&snapshot)?;
-                publish(&image, &snapshot).with_context(|| {
+                publish(image, &snapshot).with_context(|| {
                     format!("preserving {id} after failed branch restore: {error:#}")
                 })?;
                 return Err(error)
@@ -943,7 +963,7 @@ impl Runtime {
             }
         }
 
-        let size = dir_size(&image);
+        let size = dir_size(image);
         tracing::info!(%id, %tag, size_bytes = size, "branched");
         Ok(size)
     }
@@ -1104,6 +1124,7 @@ impl Runtime {
                 volume: None,
                 net_index: Some(slot),
                 from_tag: None,
+                snapshot_id: None,
                 gateway_port: None,
                 token: "",
                 egress: &Default::default(),
@@ -1159,6 +1180,18 @@ impl Runtime {
         std::fs::remove_dir_all(&image).ok();
         tracing::info!(%tag, "tag removed");
         Ok(())
+    }
+
+    /// A delayed cleanup can only remove the creation it was issued for.
+    pub fn drop_snapshot_tag(&self, tag: &str, snapshot_id: &str) -> Result<()> {
+        let image = super::tags::version_path(&self.tags_dir(), tag, snapshot_id)?;
+        match std::fs::remove_dir_all(&image) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                Err(error).with_context(|| format!("removing snapshot {snapshot_id} of {tag}"))
+            }
+        }
     }
 
     /// Where a template's rootfs lives on this node.
@@ -2141,6 +2174,7 @@ mod backend_tests {
                 volume: None,
                 net_index: None,
                 from_tag: None,
+                snapshot_id: None,
                 gateway_port: None,
                 token: "",
                 egress: &Default::default(),
@@ -2576,7 +2610,7 @@ fn clear_attempts(dest: &Path) -> Result<&Path> {
 /// makes that one step where the filesystem supports it; elsewhere the
 /// check and the rename are two, which holds because one sandbox's
 /// transitions never run at once.
-fn publish(from: &Path, to: &Path) -> Result<()> {
+pub(super) fn publish(from: &Path, to: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::ffi::OsStrExt;

@@ -133,8 +133,9 @@ fn e2b_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<E2bSandbox> {
 #[derive(Debug, Clone)]
 pub struct SnapshotTag {
     pub tag: String,
-    /// Which node holds the image. Tags are node-local for now, so a fork
-    /// from one is placed on that node.
+    /// One creation of a name; persisted independently of its source node.
+    pub snapshot_id: String,
+    /// Which node holds the authoritative image.
     pub node_id: String,
     pub template: String,
     /// The sandbox it was branched from, when it came from one.
@@ -368,6 +369,7 @@ impl Store {
             // so placement can refuse at schedule time instead of letting
             // the restore fail on the node.
             "ALTER TABLE snapshots ADD COLUMN fingerprint TEXT",
+            "ALTER TABLE snapshots ADD COLUMN snapshot_id TEXT NOT NULL DEFAULT ''",
             // The HOST port this sandbox's gateway listens on. Distinct from
             // `port`, which is the port inside the namespace and may be 8080
             // for every sandbox on the node.
@@ -403,6 +405,13 @@ impl Store {
                 Err(e) => return Err(e.into()),
             }
         }
+        // Only the authoritative source may adopt an unversioned image for
+        // these IDs; remote caches must fetch it again.
+        self.conn.execute(
+            "UPDATE snapshots SET snapshot_id='legacy-' || lower(hex(randomblob(16)))
+             WHERE snapshot_id=''",
+            [],
+        )?;
         // Nodes from before the history existed have been where they are
         // for as long as the history goes back.
         self.conn.execute(
@@ -1252,12 +1261,13 @@ impl Store {
 
     pub fn put_snapshot(&self, s: &SnapshotTag) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO snapshots (tag, node_id, template, from_sandbox, created_at, size_bytes, port)
-             VALUES (?1,?2,?3,?4,?5,?6,?7)
+            "INSERT INTO snapshots (tag, node_id, template, from_sandbox, created_at, size_bytes, port, snapshot_id)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
              ON CONFLICT(tag) DO UPDATE SET
                 node_id=excluded.node_id, template=excluded.template,
                 from_sandbox=excluded.from_sandbox, created_at=excluded.created_at,
-                size_bytes=excluded.size_bytes, port=excluded.port",
+                size_bytes=excluded.size_bytes, port=excluded.port,
+                snapshot_id=excluded.snapshot_id",
             params![
                 s.tag,
                 s.node_id,
@@ -1265,7 +1275,8 @@ impl Store {
                 s.from_sandbox,
                 s.created_at,
                 s.size_bytes as i64,
-                s.port
+                s.port,
+                s.snapshot_id
             ],
         )?;
         Ok(())
@@ -1275,7 +1286,7 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT tag, node_id, template, from_sandbox, created_at, size_bytes, port
+                "SELECT tag, node_id, template, from_sandbox, created_at, size_bytes, port, snapshot_id
                  FROM snapshots WHERE tag=?1",
                 params![tag],
                 Self::row_to_snapshot,
@@ -1285,7 +1296,7 @@ impl Store {
 
     pub fn list_snapshots(&self) -> Result<Vec<SnapshotTag>> {
         let mut stmt = self.conn.prepare(
-            "SELECT tag, node_id, template, from_sandbox, created_at, size_bytes, port
+            "SELECT tag, node_id, template, from_sandbox, created_at, size_bytes, port, snapshot_id
              FROM snapshots ORDER BY created_at DESC",
         )?;
         let rows = stmt
@@ -1315,6 +1326,7 @@ impl Store {
     fn row_to_snapshot(r: &rusqlite::Row<'_>) -> rusqlite::Result<SnapshotTag> {
         Ok(SnapshotTag {
             tag: r.get(0)?,
+            snapshot_id: r.get(7)?,
             node_id: r.get(1)?,
             template: r.get(2)?,
             from_sandbox: r.get(3)?,
@@ -1468,10 +1480,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn snapshot_versions_survive_upgrade_restart_and_name_reuse() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(
+                "CREATE TABLE snapshots (
+                    tag TEXT PRIMARY KEY, node_id TEXT NOT NULL,
+                    template TEXT NOT NULL, from_sandbox TEXT,
+                    created_at INTEGER NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO snapshots (tag, node_id, template, created_at)
+                 VALUES ('release', 'a', 'app', 1);",
+            )
+            .unwrap();
+        }
+        let original = {
+            let upgraded = Store::open(&path).unwrap();
+            let snapshot = upgraded.get_snapshot("release").unwrap().unwrap();
+            assert!(snapshot.snapshot_id.starts_with("legacy-"));
+            assert_eq!(snapshot.node_id, "a");
+            snapshot
+        };
+        let restarted = Store::open(&path).unwrap();
+        assert_eq!(
+            restarted
+                .get_snapshot("release")
+                .unwrap()
+                .unwrap()
+                .snapshot_id,
+            original.snapshot_id
+        );
+        assert!(restarted.delete_snapshot("release").unwrap());
+        let mut replacement = original.clone();
+        replacement.snapshot_id = crate::identity::random_token();
+        restarted.put_snapshot(&replacement).unwrap();
+        let saved = restarted.list_snapshots().unwrap().pop().unwrap();
+        assert_eq!(saved.snapshot_id, replacement.snapshot_id);
+        assert_ne!(saved.snapshot_id, original.snapshot_id);
+    }
+
+    #[test]
     fn a_tag_keeps_the_port_its_forks_serve_on() {
         let st = Store::open_in_memory().unwrap();
         let tag = |name: &str, port| SnapshotTag {
             tag: name.into(),
+            snapshot_id: crate::identity::random_token(),
             node_id: "n1".into(),
             template: "app64".into(),
             from_sandbox: Some("sb-1".into()),

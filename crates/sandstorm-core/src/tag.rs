@@ -70,6 +70,31 @@ pub fn fetch_token(secret: &str, tag: &str, for_node: &str, expires: i64) -> Str
     )
 }
 
+/// Bind the transfer credential to one creation of a user-visible tag.
+pub fn fetch_snapshot_token(
+    secret: &str,
+    tag: &str,
+    snapshot_id: &str,
+    for_node: &str,
+    expires: i64,
+) -> String {
+    let scope = format!("snapshot:{}:{tag}{snapshot_id}", tag.len());
+    fetch_token(secret, &scope, for_node, expires)
+}
+
+pub fn fetch_snapshot_token_valid(
+    secret: &str,
+    tag: &str,
+    snapshot_id: &str,
+    for_node: &str,
+    expires: i64,
+    token: &str,
+    now: i64,
+) -> bool {
+    let scope = format!("snapshot:{}:{tag}{snapshot_id}", tag.len());
+    fetch_token_valid(secret, &scope, for_node, expires, token, now)
+}
+
 /// Whether `token` is one this node's `secret` signed for exactly this
 /// tag, fetching node and expiry, and the expiry has not passed.
 pub fn fetch_token_valid(
@@ -96,6 +121,20 @@ pub fn fetch_token_valid(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_transfer_token_is_bound_to_one_snapshot_creation() {
+        let token = fetch_snapshot_token("secret", "release", "first", "b", 100);
+        assert!(fetch_snapshot_token_valid(
+            "secret", "release", "first", "b", 100, &token, 99
+        ));
+        assert!(!fetch_snapshot_token_valid(
+            "secret", "release", "second", "b", 100, &token, 99
+        ));
+        assert!(!fetch_token_valid(
+            "secret", "release", "b", 100, &token, 99
+        ));
+    }
 
     #[test]
     fn a_fetch_token_is_good_for_its_tag_node_and_time_only() {

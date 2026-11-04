@@ -162,6 +162,10 @@ pub struct PollRequest {
     /// -- is never mistaken for one that was deleted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Immutable versions held by upgraded nodes, including older versions
+    /// of a name that has since been reused.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tag_versions: Vec<TagVersion>,
     /// What this node's fingerprint is made of. Sent with every full report
     /// rather than only at registration, so nodes registered before it
     /// existed fill it in too; the master writes it only when it changes.
@@ -355,6 +359,12 @@ pub struct PollResponse {
     pub commands: Vec<Command>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagVersion {
+    pub tag: String,
+    pub snapshot_id: String,
+}
+
 /// A command the node should run once, as opposed to a tier the master
 /// wants it to reach.
 ///
@@ -388,6 +398,10 @@ pub enum Command {
         /// a copy: measured at 45 ms each, five at once from one 14 MiB
         /// image.
         from_tag: Option<String>,
+        /// The immutable image this name referred to when the master
+        /// issued the command, also for a restore on the source node.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        snapshot_id: Option<String>,
         /// Host port the node's gateway listens on for this sandbox.
         ///
         /// Unlike `port` this one IS a host port, so it is allocated per
@@ -437,13 +451,20 @@ pub enum Command {
     Branch {
         id: String,
         tag: String,
+        #[serde(default)]
+        snapshot_id: String,
         /// Correlates the result with the caller waiting on it, exactly as
         /// for Exec.
         result_id: String,
     },
     /// Remove a tag's image from this node. Issued for a tag the node
     /// reports holding that the master no longer has.
-    DropTag { tag: String },
+    DropTag {
+        tag: String,
+        /// None only removes an unversioned, pre-upgrade directory.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        snapshot_id: Option<String>,
+    },
     /// Run a command inside a sandbox and report back. `exec_id` is how the
     /// master matches the result to the caller still waiting on it.
     Exec {
@@ -474,6 +495,8 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchFrom {
     pub node_id: String,
+    #[serde(default)]
+    pub snapshot_id: String,
     pub address: String,
     pub cert_sha256: String,
     /// The fetching node, which the token is bound to.

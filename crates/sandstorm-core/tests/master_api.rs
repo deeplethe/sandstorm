@@ -14,6 +14,8 @@ use sandstorm_core::state::Store;
 use sandstorm_core::tier::Tier;
 use tempfile::TempDir;
 
+use sandstorm_core::node::{tags as node_tags, AgentIdentity};
+
 struct Harness {
     base: String,
     _td: TempDir,
@@ -1943,6 +1945,9 @@ async fn deleting_wakes_a_parked_node() {
 /// removed options return 410 naming the replacement.
 mod branch {
     use super::*;
+    use sandstorm_core::node::{Backend, BuildRequest, CreateRequest, Runtime, RuntimeConfig};
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Stand in for a node: take the branch command and report success.
     async fn serve_branch(base: &str, node: &str, size: u64) -> Option<String> {
@@ -2408,17 +2413,24 @@ mod branch {
                 );
                 assert_eq!(f.for_node, "bm-2");
                 assert_eq!(f.cert_sha256, "ab".repeat(32));
-                assert!(sandstorm_core::tag::fetch_token_valid(
+                assert!(sandstorm_core::tag::fetch_snapshot_token_valid(
                     "s3cret",
                     "t",
+                    &f.snapshot_id,
                     "bm-2",
                     f.expires,
                     &f.token,
                     sandstorm_core::state::now_secs()
                 ));
                 assert!(
-                    !sandstorm_core::tag::fetch_token_valid(
-                        "s3cret", "t", "bm-3", f.expires, &f.token, 0
+                    !sandstorm_core::tag::fetch_snapshot_token_valid(
+                        "s3cret",
+                        "t",
+                        &f.snapshot_id,
+                        "bm-3",
+                        f.expires,
+                        &f.token,
+                        0
                     ),
                     "the token is bound to bm-2"
                 );
@@ -2495,6 +2507,450 @@ mod branch {
         assert_eq!(kid["node_id"], "bm-2");
     }
 
+    async fn image_source(
+        h: &Harness,
+        node: &str,
+        dir: &Path,
+    ) -> (Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let id = AgentIdentity::load_or_create(&dir.join("pki")).unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
+        let app = node_tags::routes(dir.join("tags"), id.secret.clone()).layer(
+            axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let count = count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        next.run(request).await
+                    }
+                },
+            ),
+        );
+        let tls = sandstorm_core::tls::plain_server_config(&id.cert_pem, &id.key_pem).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        Store::open(h._td.path().join("state.db"))
+            .unwrap()
+            .set_node_agent(
+                node,
+                &listener.local_addr().unwrap().to_string(),
+                &id.fingerprint,
+                &id.secret,
+            )
+            .unwrap();
+        let server = tokio::spawn(async move {
+            axum_server::from_tcp_rustls(
+                listener,
+                axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls)),
+            )
+            .unwrap()
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+        });
+        (requests, server)
+    }
+
+    async fn write_branch_image(
+        h: &Harness,
+        parent: &str,
+        node: &str,
+        dir: &Path,
+        contents: &[u8],
+    ) {
+        let runtime = Runtime::with_backend(
+            RuntimeConfig {
+                work_dir: dir.to_path_buf(),
+                volume_root: dir.join("volumes"),
+                ..Default::default()
+            },
+            Arc::new(RestoreRecorder {
+                checkpoint_contents: contents.to_vec(),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        let bundle = dir.join("bundles").join(parent);
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("config.json"), "{}").unwrap();
+        let worker = async {
+            for _ in 0..80 {
+                for command in poll(h, node, &[]).await {
+                    if let Command::Branch {
+                        result_id,
+                        tag,
+                        snapshot_id,
+                        ..
+                    } = command
+                    {
+                        let size = runtime.branch_snapshot(parent, &tag, &snapshot_id).unwrap();
+                        assert_eq!(reqwest::Client::new()
+                            .post(format!("{}/v1/node/result", h.base))
+                            .json(&serde_json::json!({ "result_id": result_id, "exit_code": 0, "size_bytes": size }))
+                            .send().await.unwrap().status(), 204);
+                        return tag;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("the master never sent the branch command");
+        };
+        let request = reqwest::Client::new()
+            .post(format!("{}/v1/sandboxes/{parent}/branch", h.base))
+            .json(&serde_json::json!({ "tag": "release" }))
+            .send();
+        let (tag, response) = tokio::join!(worker, request);
+        let response = response.unwrap();
+        assert_eq!(response.status(), 201, "{}", response.text().await.unwrap());
+        assert_eq!(tag, "release");
+    }
+
+    async fn fork_on_b(h: &Harness) -> (String, sandstorm_core::proto::FetchFrom) {
+        let response = fork(
+            h,
+            serde_json::json!({ "snapshot_tag": "release", "node_id": "bm-2" }),
+        )
+        .await;
+        assert_eq!(response.status(), 201);
+        let child: serde_json::Value = response.json().await.unwrap();
+        let child_id = child["id"].as_str().unwrap().to_string();
+        let from = poll(h, "bm-2", &[])
+            .await
+            .into_iter()
+            .find_map(|cmd| match cmd {
+                Command::Create {
+                    id,
+                    from_tag: Some(tag),
+                    snapshot_id,
+                    fetch: Some(from),
+                    ..
+                } if id == child_id && tag == "release" => {
+                    assert_eq!(snapshot_id.as_deref(), Some(from.snapshot_id.as_str()));
+                    Some(*from)
+                }
+                _ => None,
+            })
+            .expect("B must receive a restore command with its transfer source");
+        (child_id, from)
+    }
+
+    #[derive(Default)]
+    struct RestoreRecorder {
+        restored_contents: parking_lot::Mutex<Vec<u8>>,
+        checkpoint_contents: Vec<u8>,
+    }
+
+    impl Backend for RestoreRecorder {
+        fn version(&self) -> String {
+            "test-recorder".into()
+        }
+        fn template_root(&self, dir: &Path) -> PathBuf {
+            dir.join("rootfs")
+        }
+        fn prepare(&self, cfg: &RuntimeConfig, req: &BuildRequest<'_>) -> anyhow::Result<PathBuf> {
+            let bundle = cfg.work_dir.join("bundles").join(req.id);
+            std::fs::create_dir_all(&bundle)?;
+            std::fs::write(bundle.join("config.json"), "{}")?;
+            Ok(bundle)
+        }
+        fn layer(&self, _: &RuntimeConfig, _: &str) -> PathBuf {
+            unreachable!()
+        }
+        fn unmount(&self, _: &RuntimeConfig, _: &str) -> anyhow::Result<()> {
+            unreachable!()
+        }
+        fn teardown(&self, _: &RuntimeConfig, _: &str) -> anyhow::Result<()> {
+            unreachable!()
+        }
+        fn boot(&self, _: &str, _: &Path) -> anyhow::Result<()> {
+            panic!("a fork must restore")
+        }
+        fn restore(&self, _: &str, _: &Path, image: &Path) -> anyhow::Result<()> {
+            *self.restored_contents.lock() = std::fs::read(image.join("checkpoint.img"))?;
+            Ok(())
+        }
+        fn checkpoint(&self, _: &str, image: &Path, _: bool) -> anyhow::Result<()> {
+            std::fs::write(image.join("checkpoint.img"), &self.checkpoint_contents)?;
+            Ok(())
+        }
+        fn validate(&self, image: &Path) -> anyhow::Result<()> {
+            anyhow::ensure!(image.join("checkpoint.img").is_file(), "no checkpoint.img");
+            Ok(())
+        }
+        fn resume_after_checkpoint(&self, _: &str, _: &Path) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+        fn remove(&self, _: &str) {
+            unreachable!()
+        }
+        fn kill(&self, _: &str) {
+            unreachable!()
+        }
+        fn exec(
+            &self,
+            _: &str,
+            _: &[String],
+            _: std::time::Duration,
+        ) -> anyhow::Result<(String, String, i64)> {
+            unreachable!()
+        }
+    }
+
+    async fn restored_checkpoint(
+        fetches: &Arc<node_tags::Fetches>,
+        runtime: &Runtime,
+        recorder: &RestoreRecorder,
+        child: &str,
+        from: &sandstorm_core::proto::FetchFrom,
+    ) -> Vec<u8> {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match fetches.ensure(&runtime.tags_dir(), "release", from) {
+                    node_tags::Status::Ready => {
+                        runtime
+                            .create(&CreateRequest {
+                                id: child,
+                                template: "python",
+                                spec: &serde_json::json!({ "args": ["test"], "ro_binds": [] }),
+                                port: 8080,
+                                volume: None,
+                                net_index: None,
+                                from_tag: Some("release"),
+                                snapshot_id: Some(&from.snapshot_id),
+                                gateway_port: None,
+                                token: "",
+                                egress: &Default::default(),
+                            })
+                            .unwrap();
+                        return recorder.restored_contents.lock().clone();
+                    }
+                    node_tags::Status::Pending => {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await
+                    }
+                    node_tags::Status::Failed(error) => panic!("fetch failed: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("the transfer must complete")
+    }
+
+    async fn recreated_tag_restores_new_contents(same_source: bool) {
+        let h = start().await;
+        let parent_a = hot(&h).await;
+        register_fp(&h, "bm-2", "abc123").await;
+        register_fp(&h, "bm-3", "abc123").await;
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let c = tempfile::tempdir().unwrap();
+        let (a_requests, a_server) = image_source(&h, "bm-1", a.path()).await;
+        let (c_requests, c_server) = image_source(&h, "bm-3", c.path()).await;
+        write_branch_image(&h, &parent_a, "bm-1", a.path(), b"old").await;
+        let fetches = Arc::new(node_tags::Fetches::default());
+        let recorder = Arc::new(RestoreRecorder::default());
+        let runtime = Runtime::with_backend(
+            RuntimeConfig {
+                work_dir: b.path().to_path_buf(),
+                volume_root: b.path().join("volumes"),
+                ..Default::default()
+            },
+            recorder.clone(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(b.path().join("templates/python/rootfs")).unwrap();
+        let (old_child, old_from) = fork_on_b(&h).await;
+        assert_eq!(old_from.node_id, "bm-1");
+        assert_eq!(
+            restored_checkpoint(&fetches, &runtime, &recorder, &old_child, &old_from).await,
+            b"old"
+        );
+
+        let client = reqwest::Client::new();
+        assert_eq!(
+            client
+                .delete(format!("{}/v1/sandboxes/{old_child}", h.base))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            204
+        );
+        assert_eq!(
+            client
+                .delete(format!("{}/v1/snapshots/release", h.base))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            204
+        );
+        // B deliberately does not poll between deletion and recreation, so its old image remains.
+        let source = if same_source { "bm-1" } else { "bm-3" };
+        let new_parent: serde_json::Value = client
+            .post(format!("{}/v1/sandboxes", h.base))
+            .json(&serde_json::json!({ "template": "python", "node_id": source }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let source_dir = if same_source { a.path() } else { c.path() };
+        write_branch_image(
+            &h,
+            new_parent["id"].as_str().unwrap(),
+            source,
+            source_dir,
+            b"new",
+        )
+        .await;
+        let (new_child, new_from) = fork_on_b(&h).await;
+        assert_eq!(
+            new_from.node_id, source,
+            "master must select the recreated tag's actual source before checking the image"
+        );
+        assert_ne!(new_from.snapshot_id, old_from.snapshot_id);
+        assert_eq!(
+            restored_checkpoint(&fetches, &runtime, &recorder, &new_child, &new_from).await,
+            b"new",
+            "the image opened by Backend::restore must belong to this creation of release"
+        );
+
+        let versions = node_tags::held_versions(&runtime.tags_dir(), std::time::Duration::ZERO);
+        assert_eq!(versions.len(), 2, "B still holds both creations of release");
+        let response: PollResponse = client
+            .post(format!("{}/v1/node/poll", h.base))
+            .json(&serde_json::json!({
+                "node_id": "bm-2", "observed": [], "tags": [], "tag_versions": versions,
+                "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let drops: Vec<_> = response
+            .commands
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::DropTag { tag, snapshot_id } => Some((tag, snapshot_id)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            drops,
+            vec![("release".to_string(), Some(old_from.snapshot_id.clone()))],
+            "cleanup must identify only the retired creation"
+        );
+        runtime
+            .drop_snapshot_tag("release", &old_from.snapshot_id)
+            .unwrap();
+        // A cleanup issued by an older master can arrive after the new image has landed.
+        runtime.drop_tag("release").unwrap();
+
+        let total_requests = a_requests.load(Ordering::SeqCst) + c_requests.load(Ordering::SeqCst);
+        assert!(
+            total_requests >= 4,
+            "both images must really transfer over TLS"
+        );
+        a_server.abort();
+        c_server.abort();
+        let (cached_child, cached_from) = fork_on_b(&h).await;
+        assert_eq!(cached_from.snapshot_id, new_from.snapshot_id);
+        assert_eq!(
+            restored_checkpoint(&fetches, &runtime, &recorder, &cached_child, &cached_from).await,
+            b"new"
+        );
+        assert_eq!(
+            a_requests.load(Ordering::SeqCst) + c_requests.load(Ordering::SeqCst),
+            total_requests,
+            "forking the same immutable snapshot again must use the cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn reusing_a_tag_fetches_the_recreated_image_from_the_new_source() {
+        recreated_tag_restores_new_contents(false).await;
+    }
+
+    #[tokio::test]
+    async fn reusing_a_tag_on_the_same_source_fetches_the_recreated_image() {
+        recreated_tag_restores_new_contents(true).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_branches_cannot_replace_the_first_snapshot_bound_to_a_tag() {
+        let h = start().await;
+        let first_parent = hot(&h).await;
+        register_fp(&h, "bm-2", "abc123").await;
+        make_agent(&h, "bm-1");
+        let client = reqwest::Client::new();
+        let second_parent: serde_json::Value = client
+            .post(format!("{}/v1/sandboxes", h.base))
+            .json(&serde_json::json!({ "template": "python", "node_id": "bm-1" }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let second_parent = second_parent["id"].as_str().unwrap().to_string();
+        let branch = |parent: &str| {
+            let base = h.base.clone();
+            let parent = parent.to_string();
+            tokio::spawn(async move {
+                reqwest::Client::new()
+                    .post(format!("{base}/v1/sandboxes/{parent}/branch"))
+                    .json(&serde_json::json!({ "tag": "release" }))
+                    .send()
+                    .await
+                    .unwrap()
+            })
+        };
+        let first_request = branch(&first_parent);
+        let second_request = branch(&second_parent);
+        let commands = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut branches = std::collections::HashMap::new();
+            while branches.len() < 2 {
+                for command in poll(&h, "bm-1", &[]).await {
+                    if let Command::Branch {
+                        id,
+                        result_id,
+                        snapshot_id,
+                        ..
+                    } = command
+                    {
+                        branches.insert(id, (result_id, snapshot_id));
+                    }
+                }
+            }
+            branches
+        })
+        .await
+        .expect("both branches must pass their preflight before either completes");
+        let (first_result, first_snapshot) = &commands[&first_parent];
+        let (second_result, second_snapshot) = &commands[&second_parent];
+        assert_ne!(first_snapshot, second_snapshot);
+        assert_eq!(client.post(format!("{}/v1/node/result", h.base))
+            .json(&serde_json::json!({ "result_id": first_result, "exit_code": 0, "size_bytes": 3 }))
+            .send().await.unwrap().status(), 204);
+        assert_eq!(first_request.await.unwrap().status(), 201);
+        let (_, first_from) = fork_on_b(&h).await;
+        assert_eq!(&first_from.snapshot_id, first_snapshot);
+
+        assert_eq!(client.post(format!("{}/v1/node/result", h.base))
+            .json(&serde_json::json!({ "result_id": second_result, "exit_code": 0, "size_bytes": 3 }))
+            .send().await.unwrap().status(), 204);
+        assert_eq!(
+            second_request.await.unwrap().status(),
+            409,
+            "a later completion must not replace the snapshot already returned to callers"
+        );
+        let (_, still_first) = fork_on_b(&h).await;
+        assert_eq!(&still_first.snapshot_id, first_snapshot);
+    }
+
     /// Deleting a snapshot removes its record; each node that holds the
     /// image drops it when it next reports holding it.
     #[tokio::test]
@@ -2505,7 +2961,7 @@ mod branch {
         let drops = |cmds: Vec<sandstorm_core::proto::Command>| {
             cmds.into_iter()
                 .filter_map(|c| match c {
-                    sandstorm_core::proto::Command::DropTag { tag } => Some(tag),
+                    sandstorm_core::proto::Command::DropTag { tag, .. } => Some(tag),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
