@@ -1008,9 +1008,9 @@ fn rename_netns(_from: &str, _to: &str) -> Result<()> {
 /// master's plan and costs nothing to keep.
 /// Bring a sandbox's host end down, which frees its address for the next
 /// sandbox at once: the route goes with it. For a destroy that finishes
-/// later, off the node's command loop -- the master hands the address on as
-/// soon as it has sent the destroy, and a second up interface on the same
-/// /30 took the new sandbox's packets for a second.
+/// later, off the node's command loop. The master reserves the address until
+/// cleanup completes; bringing the interface down also stops traffic during
+/// that cleanup.
 pub fn quiesce(cfg: &NetConfig, id: &str, index: u32) -> Result<()> {
     let s = named(cfg.slot(id, index)?);
     if !has_namespace(&s) {
@@ -1021,7 +1021,7 @@ pub fn quiesce(cfg: &NetConfig, id: &str, index: u32) -> Result<()> {
 
 /// Whether this sandbox still has its namespace, and so its veth.
 ///
-/// The master asks for a destroy until a report no longer lists the sandbox,
+/// The master asks for a destroy until the node confirms cleanup,
 /// so a repeat can arrive after the first is done: 52 of 943 on bare metal in
 /// a run of bursts. By then a veth built for it under its own name is in the
 /// pool, or is another sandbox's. Going by the name alone took one down or
@@ -1051,6 +1051,16 @@ pub fn teardown(cfg: &NetConfig, id: &str, index: u32, pool: Option<&Pool>) -> R
     // Deleting the netns takes the peer with it; the host end has to go too.
     let _ = run("removing netns", &["ip", "netns", "del", &s.netns]);
     let _ = run("removing veth", &["ip", "link", "del", &s.host_if]);
+    anyhow::ensure!(
+        !has_namespace(&s),
+        "sandbox network namespace {} still exists",
+        s.netns
+    );
+    anyhow::ensure!(
+        !std::path::Path::new(&format!("/sys/class/net/{}", s.host_if)).try_exists()?,
+        "sandbox network interface {} still exists",
+        s.host_if
+    );
     Ok(())
 }
 

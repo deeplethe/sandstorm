@@ -283,6 +283,12 @@ Answers `201` with a [Sandbox](#sandbox), or with a list of them when `n` is
 given. Each carries its `token` this one time: no other response has it, so keep
 it. A `503` means no node can take it now.
 
+Reusing an explicitly chosen `id` after deletion returns `409` with a cleanup
+reason, without issuing a token, until the previous node confirms removal of
+that exact instance. This reservation survives master restarts and node
+disconnects. Once cleanup completes, creation returns `201` with a fresh token;
+the previous token cannot access the replacement.
+
 **Where forks run.** A tag's image is written on the node that branched it. If
 that node is one the master connects to, each child goes to the least loaded node
 whose host fingerprint matches the tag's, and a node without the image fetches it
@@ -312,6 +318,14 @@ One [Sandbox](#sandbox), without its token.
 ### DELETE /v1/sandboxes/:id
 
 Delete it, on whichever tier it is. Answers `204`.
+
+Removal from the API is immediate; node cleanup is asynchronous. The ID, network
+slot and gateway port remain reserved until the node finishes cleanup and
+acknowledges the old instance's token. Sending `Destroy` or observing an empty
+node is insufficient. Cleanup acknowledgements are retried, including after a
+node restart. Upgrade the master before its nodes: older nodes cannot confirm
+cleanup, so their reservations remain until those nodes are upgraded and report
+completion. New nodes reject unscoped commands against token-protected instances.
 
 ### POST /v1/sandboxes/:id/touch
 

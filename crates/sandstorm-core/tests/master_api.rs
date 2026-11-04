@@ -20,7 +20,10 @@ struct Harness {
 }
 
 async fn start() -> Harness {
-    let td = TempDir::new().unwrap();
+    start_with_state(TempDir::new().unwrap()).await.0
+}
+
+async fn start_with_state(td: TempDir) -> (Harness, Arc<MasterState>, tokio::task::JoinHandle<()>) {
     let st = Arc::new(MasterState::new(
         Store::open(td.path().join("state.db")).unwrap(),
         Ca::open_or_create(td.path().join("pki")).unwrap(),
@@ -39,13 +42,18 @@ async fn start() -> Harness {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, router(st)).await.ok();
+    let server_state = st.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router(server_state)).await.ok();
     });
-    Harness {
-        base: format!("http://{addr}"),
-        _td: td,
-    }
+    (
+        Harness {
+            base: format!("http://{addr}"),
+            _td: td,
+        },
+        st,
+        server,
+    )
 }
 
 async fn register(h: &Harness, node_id: &str, pool: &str) -> serde_json::Value {
@@ -248,7 +256,7 @@ async fn re_adoption_issues_no_commands() {
         .post(format!("{}/v1/node/poll", h.base))
         .json(&serde_json::json!({
             "node_id": "bm-1",
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None, token: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
         }))
         .send()
@@ -294,7 +302,7 @@ async fn deleting_a_sandbox_makes_the_node_destroy_it() {
         .post(format!("{}/v1/node/poll", h.base))
         .json(&serde_json::json!({
             "node_id": "bm-1",
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None, token: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
         }))
         .send()
@@ -311,6 +319,487 @@ async fn deleting_a_sandbox_makes_the_node_destroy_it() {
         "got {:?}",
         resp.commands
     );
+}
+
+mod id_reuse {
+    use super::*;
+
+    const TOK: &str = sandstorm_core::master::SANDBOX_TOKEN_HEADER;
+
+    fn observed_demo(token: &str) -> serde_json::Value {
+        serde_json::json!([{ "id": "demo", "tier": "hot", "serving": true, "token": token }])
+    }
+
+    fn destroyed_demo(token: &str) -> serde_json::Value {
+        serde_json::json!([{ "id": "demo", "token": token }])
+    }
+
+    async fn report(
+        h: &Harness,
+        node: &str,
+        observed: serde_json::Value,
+        destroyed: serde_json::Value,
+    ) -> PollResponse {
+        post_report(
+            h,
+            serde_json::json!({
+                "node_id": node, "observed": observed, "destroyed": destroyed,
+                "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
+            }),
+        )
+        .await
+    }
+
+    async fn post_report(h: &Harness, body: serde_json::Value) -> PollResponse {
+        reqwest::Client::new()
+            .post(format!("{}/v1/node/poll", h.base))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn create(
+        h: &Harness,
+        id: &str,
+        template: &str,
+    ) -> (reqwest::StatusCode, serde_json::Value) {
+        let response = reqwest::Client::new()
+            .post(format!("{}/v1/sandboxes", h.base))
+            .json(&serde_json::json!({ "id": id, "template": template, "node_id": "N" }))
+            .send()
+            .await
+            .unwrap();
+        (response.status(), response.json().await.unwrap())
+    }
+
+    async fn delete_demo(h: &Harness) {
+        let deleted = reqwest::Client::new()
+            .delete(format!("{}/v1/sandboxes/demo", h.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), 204);
+    }
+
+    fn assert_cleanup_conflict(status: reqwest::StatusCode, body: &serde_json::Value) {
+        assert_eq!(status, 409, "an old instance still holds this ID: {body}");
+        assert!(
+            body.get("token").is_none(),
+            "cleanup must not issue a token"
+        );
+        assert!(
+            body["error"].as_str().unwrap().contains("cleanup"),
+            "the conflict must explain why the ID cannot be reused: {body}"
+        );
+    }
+
+    // Poll and the caller advance together; only the actual Exec delivery
+    // triggers a result, so no timer is used to arrange the race.
+    async fn exec_with_node(
+        h: &Harness,
+        presented_token: &str,
+        running_token: &str,
+    ) -> (reqwest::StatusCode, serde_json::Value, Vec<Command>) {
+        let c = reqwest::Client::new();
+        let caller = c
+            .post(format!("{}/v1/sandboxes/demo/exec", h.base))
+            .header(TOK, presented_token)
+            .json(&serde_json::json!({ "args": ["echo", "replacement"] }))
+            .send();
+        tokio::pin!(caller);
+        let mut commands = Vec::new();
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                tokio::select! {
+                    response = &mut caller => break response.unwrap(),
+                    polled = report(h, "N", observed_demo(running_token), serde_json::json!([])) => {
+                        for command in &polled.commands {
+                            if let Command::Exec { exec_id, id, args, .. } = command {
+                                assert_eq!(id, "demo");
+                                assert_eq!(args, &["echo", "replacement"]);
+                                let result = c
+                                    .post(format!("{}/v1/node/result", h.base))
+                                    .json(&serde_json::json!({
+                                        "result_id": exec_id, "stdout": "replacement\n", "exit_code": 0
+                                    }))
+                                    .send().await.unwrap();
+                                assert_eq!(result.status(), 204);
+                            }
+                        }
+                        commands.extend(polled.commands);
+                    }
+                }
+            }
+        })
+        .await
+        .expect("exec must be refused or reach the node without a timing sleep");
+        // A refused request must not leave work behind for the next poll.
+        commands.extend(
+            report(h, "N", observed_demo(running_token), serde_json::json!([]))
+                .await
+                .commands,
+        );
+        (response.status(), response.json().await.unwrap(), commands)
+    }
+
+    async fn deleted_id_waits_for_cleanup(replacement_template: &str) {
+        let h = start().await;
+        register(&h, "N", "default").await;
+        put_template(&h, "A").await;
+        put_template(&h, "B").await;
+        let (status, original) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let old_token = original["token"].as_str().unwrap();
+        assert!(
+            report(&h, "N", observed_demo(old_token), serde_json::json!([]))
+                .await
+                .commands
+                .is_empty()
+        );
+
+        delete_demo(&h).await;
+        let (status, body) = create(&h, "demo", replacement_template).await;
+        let mut commands = report(&h, "N", observed_demo(old_token), serde_json::json!([]))
+            .await
+            .commands;
+        // If a broken master issues a token, exercise it before asserting
+        // the refusal so the failure records what the old node receives.
+        if let Some(token) = body["token"].as_str() {
+            let (_, _, dispatched) = exec_with_node(&h, token, old_token).await;
+            commands.extend(dispatched);
+        }
+        assert!(
+            commands.iter().all(|command| !matches!(command, Command::Exec { .. })),
+            "replacement create returned {status}; its token dispatched Exec to old demo: {commands:?}"
+        );
+        assert_cleanup_conflict(status, &body);
+        assert!(
+            commands.iter().any(|command| matches!(command, Command::Destroy { id, token, .. } if id == "demo" && token == old_token)),
+            "the old instance must receive a fenced Destroy: {commands:?}"
+        );
+
+        // Neither an empty observation nor an acknowledgement for another
+        // instance or node proves this instance was destroyed.
+        report(&h, "N", serde_json::json!([]), serde_json::json!([])).await;
+        let (status, body) = create(&h, "demo", replacement_template).await;
+        assert_cleanup_conflict(status, &body);
+        report(
+            &h,
+            "N",
+            serde_json::json!([]),
+            destroyed_demo("wrong-token"),
+        )
+        .await;
+        let (status, body) = create(&h, "demo", replacement_template).await;
+        assert_cleanup_conflict(status, &body);
+        register(&h, "M", "other").await;
+        report(&h, "M", serde_json::json!([]), destroyed_demo(old_token)).await;
+        let (status, body) = create(&h, "demo", replacement_template).await;
+        assert_cleanup_conflict(status, &body);
+        assert_eq!(create(&h, "unrelated", "A").await.0, 201);
+
+        report(&h, "N", serde_json::json!([]), destroyed_demo(old_token)).await;
+        let (status, replacement) = create(&h, "demo", replacement_template).await;
+        assert_eq!(status, 201, "completed cleanup must make the ID reusable");
+        let new_token = replacement["token"].as_str().unwrap();
+        assert_ne!(new_token, old_token);
+        let starting = report(&h, "N", serde_json::json!([]), serde_json::json!([])).await;
+        assert!(starting.commands.iter().any(|command| matches!(command,
+            Command::Create { id, template, token, .. }
+            if id == "demo" && template == replacement_template && token == new_token
+        )));
+        let (status, _, commands) = exec_with_node(&h, old_token, new_token).await;
+        assert_eq!(status, 403, "an old token cannot access the replacement");
+        assert!(commands
+            .iter()
+            .all(|command| !matches!(command, Command::Exec { .. })));
+        let c = reqwest::Client::new();
+        let old_eval = c
+            .post(format!("{}/v1/sandboxes/demo/eval", h.base))
+            .header(TOK, old_token)
+            .json(&serde_json::json!({ "code": "print('old')" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(old_eval.status(), 403);
+        let old_ping = c
+            .get(format!("{}/v1/sandboxes/demo/ping", h.base))
+            .header(TOK, old_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(old_ping.status(), 403);
+        let (status, output, commands) = exec_with_node(&h, new_token, new_token).await;
+        assert_eq!(status, 200);
+        assert_eq!(output["stdout"], "replacement\n");
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Exec { id, token, .. } if id == "demo" && token == new_token
+        )));
+
+        delete_demo(&h).await;
+        report(&h, "N", serde_json::json!([]), destroyed_demo(old_token)).await;
+        let (status, body) = create(&h, "demo", replacement_template).await;
+        assert_cleanup_conflict(status, &body);
+        report(&h, "N", serde_json::json!([]), destroyed_demo(new_token)).await;
+        assert_eq!(create(&h, "demo", replacement_template).await.0, 201);
+    }
+
+    #[tokio::test]
+    async fn deleted_id_cannot_reach_the_old_instance_with_the_same_template() {
+        deleted_id_waits_for_cleanup("A").await;
+    }
+
+    #[tokio::test]
+    async fn deleted_id_cannot_reach_the_old_instance_with_a_different_template() {
+        deleted_id_waits_for_cleanup("B").await;
+    }
+
+    #[tokio::test]
+    async fn cleanup_survives_a_master_restart_and_a_disconnected_node() {
+        let (h, state, server) = start_with_state(TempDir::new().unwrap()).await;
+        register(&h, "N", "default").await;
+        put_template(&h, "A").await;
+        let (status, original) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let token = original["token"].as_str().unwrap();
+        report(&h, "N", observed_demo(token), serde_json::json!([])).await;
+        delete_demo(&h).await;
+        assert!(report(&h, "N", observed_demo(token), serde_json::json!([]))
+            .await
+            .commands
+            .iter()
+            .any(|command| matches!(command, Command::Destroy { .. })));
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+        drop(state);
+
+        let (h, state, server) = start_with_state(h._td).await;
+        state.store().mark_all_nodes_disconnected().unwrap();
+        let (status, body) = create(&h, "demo", "A").await;
+        assert_cleanup_conflict(status, &body);
+        report(&h, "N", serde_json::json!([]), serde_json::json!([])).await;
+        let (status, body) = create(&h, "demo", "A").await;
+        assert_cleanup_conflict(status, &body);
+        // The acknowledgement may have been lost before the restart. A
+        // retry from the owning node releases the persisted tombstone.
+        report(&h, "N", serde_json::json!([]), destroyed_demo(token)).await;
+        assert_eq!(create(&h, "demo", "A").await.0, 201);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn deleting_a_sandbox_discards_its_queued_exec() {
+        use tower::ServiceExt;
+
+        let (h, state, server) = start_with_state(TempDir::new().unwrap()).await;
+        register(&h, "N", "default").await;
+        put_template(&h, "A").await;
+        let (status, original) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let token = original["token"].as_str().unwrap();
+        report(&h, "N", observed_demo(token), serde_json::json!([])).await;
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/sandboxes/demo/exec")
+            .header("content-type", "application/json")
+            .header(TOK, token)
+            .body(axum::body::Body::from(r#"{"args":["echo","old"]}"#))
+            .unwrap();
+        let queued = router(state).oneshot(request);
+        tokio::pin!(queued);
+        // The in-memory body is ready: this poll reaches the handler's
+        // wait for the node result, with Exec already queued.
+        assert!(futures_util::poll!(&mut queued).is_pending());
+        delete_demo(&h).await;
+        let commands = report(&h, "N", observed_demo(token), serde_json::json!([]))
+            .await
+            .commands;
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Destroy { .. })));
+        assert!(
+            commands
+                .iter()
+                .all(|command| !matches!(command, Command::Exec { .. })),
+            "deleted Exec must not be delivered: {commands:?}"
+        );
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), queued)
+            .await
+            .expect("deletion must also release the waiting caller")
+            .unwrap();
+        assert!(!response.status().is_success());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_stale_old_report_cannot_receive_the_replacements_exec() {
+        use tower::ServiceExt;
+
+        let (h, state, server) = start_with_state(TempDir::new().unwrap()).await;
+        register(&h, "N", "default").await;
+        put_template(&h, "A").await;
+        let (status, original) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let old_token = original["token"].as_str().unwrap();
+        report(&h, "N", observed_demo(old_token), serde_json::json!([])).await;
+        delete_demo(&h).await;
+        report(&h, "N", serde_json::json!([]), destroyed_demo(old_token)).await;
+        let (status, replacement) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let new_token = replacement["token"].as_str().unwrap();
+
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/sandboxes/demo/exec")
+            .header("content-type", "application/json")
+            .header(TOK, new_token)
+            .body(axum::body::Body::from(r#"{"args":["echo","new"]}"#))
+            .unwrap();
+        let queued = router(state).oneshot(request);
+        tokio::pin!(queued);
+        assert!(futures_util::poll!(&mut queued).is_pending());
+        let stale = report(&h, "N", observed_demo(old_token), serde_json::json!([])).await;
+        assert!(
+            stale
+                .commands
+                .iter()
+                .all(|command| !matches!(command, Command::Exec { .. })),
+            "the old instance cannot take the replacement's queued exec: {:?}",
+            stale.commands
+        );
+        assert!(stale.commands.iter().any(|command| matches!(command,
+            Command::Destroy { id, token, .. } if id == "demo" && token == old_token
+        )));
+        assert!(
+            futures_util::poll!(&mut queued).is_pending(),
+            "the new exec must remain queued"
+        );
+
+        let current = report(&h, "N", observed_demo(new_token), serde_json::json!([])).await;
+        let exec_id = current
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Exec {
+                    exec_id,
+                    id,
+                    token,
+                    args,
+                    ..
+                } => {
+                    assert_eq!(id, "demo");
+                    assert_eq!(token, new_token);
+                    assert_eq!(args, &["echo", "new"]);
+                    Some(exec_id)
+                }
+                _ => None,
+            })
+            .expect("the current instance must receive the waiting exec");
+        let result = reqwest::Client::new()
+            .post(format!("{}/v1/node/result", h.base))
+            .json(&serde_json::json!({ "result_id": exec_id, "stdout": "new\n", "exit_code": 0 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(result.status(), 204);
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), queued)
+            .await
+            .expect("the new exec result must reach its caller")
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_old_instances_reports_cannot_quarantine_or_retier_its_replacement() {
+        let (h, state, server) = start_with_state(TempDir::new().unwrap()).await;
+        register(&h, "N", "default").await;
+        put_template(&h, "A").await;
+        let (status, original) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let old_token = original["token"].as_str().unwrap();
+        let stale_failure = serde_json::json!({
+            "node_id": "N", "observed": observed_demo(old_token),
+            "failures": [{
+                "id": "demo", "token": old_token,
+                "error": "old instance failed", "attempts": sandstorm_core::master::MAX_FAILURES,
+            }],
+            "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
+        });
+        post_report(&h, stale_failure.clone()).await;
+        assert_eq!(
+            state
+                .store()
+                .get_sandbox("demo")
+                .unwrap()
+                .unwrap()
+                .error_attempts,
+            sandstorm_core::master::MAX_FAILURES
+        );
+        delete_demo(&h).await;
+        report(&h, "N", serde_json::json!([]), destroyed_demo(old_token)).await;
+        let (status, replacement) = create(&h, "demo", "A").await;
+        assert_eq!(status, 201);
+        let new_token = replacement["token"].as_str().unwrap();
+
+        post_report(&h, stale_failure).await;
+        let current = state.store().get_sandbox("demo").unwrap().unwrap();
+        assert_eq!(
+            current.error_attempts, 0,
+            "an old failure must not quarantine the replacement"
+        );
+        assert!(current.last_error.is_none());
+        let next = report(&h, "N", serde_json::json!([]), serde_json::json!([])).await;
+        assert!(
+            next.commands.iter().any(|command| matches!(command,
+                Command::Create { id, token, .. } if id == "demo" && token == new_token
+            )),
+            "the replacement must still be scheduled: {:?}",
+            next.commands
+        );
+
+        post_report(&h, serde_json::json!({
+            "node_id": "N",
+            "observed": [{ "id": "demo", "token": old_token, "tier": "snapshot", "serving": false }],
+            "evicted": ["demo"],
+            "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
+        })).await;
+        assert_eq!(
+            state.store().get_sandbox("demo").unwrap().unwrap().tier,
+            Tier::Hot,
+            "an old instance's eviction must not demote its replacement"
+        );
+        // Bypass the explicit user-tier hold to test the traffic identity
+        // check itself, without depending on elapsed time.
+        state.store().set_tier("demo", Tier::Snapshot).unwrap();
+        post_report(
+            &h,
+            serde_json::json!({
+                "node_id": "N", "observed": observed_demo(old_token), "traffic": ["demo"],
+                "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
+            }),
+        )
+        .await;
+        assert_eq!(
+            state.store().get_sandbox("demo").unwrap().unwrap().tier,
+            Tier::Snapshot,
+            "an old instance's traffic must not promote its replacement"
+        );
+
+        post_report(&h, serde_json::json!({
+            "node_id": "N", "observed": [],
+            "failures": [{ "id": "demo", "token": new_token, "error": "new instance failed", "attempts": 1 }],
+            "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
+        })).await;
+        let current = state.store().get_sandbox("demo").unwrap().unwrap();
+        assert_eq!(current.error_attempts, 1);
+        assert_eq!(current.last_error.as_deref(), Some("new instance failed"));
+        server.abort();
+    }
 }
 
 #[tokio::test]
@@ -339,7 +828,7 @@ async fn touching_a_cold_sandbox_promotes_it_straight_to_hot() {
                 .post(format!("{base}/v1/node/poll"))
                 .json(&serde_json::json!({
                     "node_id": "bm-1",
-                    "observed": [ObservedSandbox { id, tier, serving: false, ip: None, net_index: None, egress: None }],
+                    "observed": [ObservedSandbox { id, tier, serving: false, ip: None, net_index: None, egress: None, token: None }],
                     "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
                 }))
                 .send()
@@ -1301,7 +1790,7 @@ mod exec {
                 .post(format!("{base}/v1/node/poll"))
                 .json(&serde_json::json!({
                     "node_id": "bm-1",
-                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
+                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None, token: None }],
                     "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
                 }))
                 .send()
@@ -1367,7 +1856,7 @@ mod exec {
                 .post(format!("{base}/v1/node/poll"))
                 .json(&serde_json::json!({
                     "node_id": "bm-1",
-                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
+                    "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None, token: None }],
                     "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
                 }))
                 .send().await.unwrap().json().await.unwrap();
@@ -2751,6 +3240,7 @@ async fn traffic_at_the_gateway_keeps_a_woken_sandbox_awake() {
                 ip: None,
                 net_index: None,
                 egress: None,
+                token: None,
             }]
         } else {
             vec![]
@@ -2825,7 +3315,7 @@ async fn traffic_at_the_gateway_keeps_a_woken_sandbox_awake() {
         .post(format!("{}/v1/node/poll", h.base))
         .json(&serde_json::json!({
             "node_id": node,
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Frozen, serving: false, ip: None, net_index: None, egress: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Frozen, serving: false, ip: None, net_index: None, egress: None, token: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
             "traffic": [id],
         }))
@@ -2867,7 +3357,7 @@ async fn a_wake_reported_out_of_turn_is_adopted_at_once() {
         .post(format!("{}/v1/node/traffic", h.base))
         .json(&serde_json::json!({
             "node_id": "bm-1",
-            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress: None, token: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0,
             "traffic": [id],
         }))
@@ -3025,7 +3515,7 @@ async fn a_sandbox_a_node_evicted_is_not_asked_back() {
         let base = h.base.clone();
         let body = serde_json::json!({
             "node_id": from,
-            "observed": [ObservedSandbox { id: id.clone(), tier, serving: tier.is_serving(), ip: None, net_index: None, egress: None }],
+            "observed": [ObservedSandbox { id: id.clone(), tier, serving: tier.is_serving(), ip: None, net_index: None, egress: None, token: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
             "evicted": evicted,
         });
@@ -3167,6 +3657,7 @@ async fn a_held_back_create_is_never_given_up_on() {
         ip: None,
         net_index: None,
         egress: None,
+        token: None,
     }]);
     poll(up, serde_json::json!([])).await;
     assert!(
@@ -3419,7 +3910,7 @@ async fn poll_with(h: &Harness, id: &str, egress: Option<Egress>) -> Vec<Command
         .post(format!("{}/v1/node/poll", h.base))
         .json(&serde_json::json!({
             "node_id": "bm-1",
-            "observed": [ObservedSandbox { id: id.to_string(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress }],
+            "observed": [ObservedSandbox { id: id.to_string(), tier: Tier::Hot, serving: true, ip: None, net_index: None, egress, token: None }],
             "free_memory_mib": 2000, "pressure_some_avg10": 0.0, "hold_ms": 0,
         }))
         .send()
@@ -3533,7 +4024,9 @@ async fn a_node_is_told_what_a_sandbox_may_reach_until_it_agrees() {
 
     // A node that has forgotten, as a restarted one has.
     match poll_with(&h, &id, Some(Egress::default())).await.as_slice() {
-        [Command::SetEgress { id: got, egress }] => {
+        [Command::SetEgress {
+            id: got, egress, ..
+        }] => {
             assert_eq!(*got, id);
             assert_eq!(*egress, want);
         }

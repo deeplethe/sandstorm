@@ -60,6 +60,7 @@ use crate::tier::Tier;
 /// accidental limiter away, so the backoff has to be explicit.
 #[derive(Debug)]
 struct Failing {
+    token: String,
     attempts: u32,
     retry_at: Instant,
     error: String,
@@ -329,6 +330,7 @@ fn promote_reading<R: Into<runtime::HostReading>>(
     let hot = Command::SetTier {
         id: id.to_string(),
         tier: Tier::Hot,
+        token: String::new(),
     };
     let deadline = Instant::now() + patience;
     let mut evicted = 0;
@@ -631,6 +633,7 @@ async fn report_wakes(
             fingerprint: None,
             templates: None,
             pulls: Vec::new(),
+            destroyed: Vec::new(),
         };
         let mut rb = client
             .post(&url)
@@ -751,6 +754,7 @@ async fn report(
         .iter()
         .map(|(id, f)| CommandFailure {
             id: id.clone(),
+            token: (!f.token.is_empty()).then(|| f.token.clone()),
             error: f.error.clone(),
             attempts: f.attempts,
             held_back: f.held_back,
@@ -773,6 +777,7 @@ async fn report(
         fingerprint: Some(rt.fingerprint()),
         templates: Some(rt.templates()),
         pulls: cfg.pulls.report(),
+        destroyed: rt.take_destroyed(),
     })
 }
 
@@ -809,9 +814,18 @@ fn run_one(
     now: Instant,
 ) -> Step {
     let id = command_id(cmd).to_string();
+    let token = match cmd {
+        Command::Create { token, .. }
+        | Command::SetEgress { token, .. }
+        | Command::SetTier { token, .. }
+        | Command::Destroy { token, .. }
+        | Command::Branch { token, .. }
+        | Command::Exec { token, .. } => token.as_str(),
+        _ => "",
+    };
 
     if let Some(f) = failing.get(&id) {
-        if f.retry_at > now {
+        if f.token == token && f.retry_at > now {
             return Step::Later(f.retry_at - now);
         }
     }
@@ -849,9 +863,11 @@ fn run_one(
             id: sb,
             args,
             timeout_secs,
+            token,
         } => {
             return Step::Answered(
                 match run_active(wake, sb, || {
+                    rt.check_token(sb, token)?;
                     rt.exec(sb, args, Duration::from_secs(*timeout_secs))
                 }) {
                     Ok((stdout, stderr, exit_code)) => CommandResult {
@@ -875,23 +891,29 @@ fn run_one(
             id: sb,
             tag,
             result_id,
+            token,
         } => {
-            return Step::Answered(match run_active(wake, sb, || rt.branch(sb, tag)) {
-                Ok(size_bytes) => CommandResult {
-                    result_id: result_id.clone(),
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 0,
-                    size_bytes,
+            return Step::Answered(
+                match run_active(wake, sb, || {
+                    rt.check_token(sb, token)?;
+                    rt.branch(sb, tag)
+                }) {
+                    Ok(size_bytes) => CommandResult {
+                        result_id: result_id.clone(),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: 0,
+                        size_bytes,
+                    },
+                    Err(e) => CommandResult {
+                        result_id: result_id.clone(),
+                        stdout: String::new(),
+                        stderr: format!("sandstorm: {e:#}\n"),
+                        exit_code: -1,
+                        size_bytes: 0,
+                    },
                 },
-                Err(e) => CommandResult {
-                    result_id: result_id.clone(),
-                    stdout: String::new(),
-                    stderr: format!("sandstorm: {e:#}\n"),
-                    exit_code: -1,
-                    size_bytes: 0,
-                },
-            })
+            )
         }
         // Housekeeping the master asks for, not work on a sandbox: nothing
         // waits on it and a failure is retried by the next report, which
@@ -946,9 +968,18 @@ fn run_one(
             }
         }
     }
-    let out = if let Command::SetTier {
+    let instance_check = match cmd {
+        Command::SetTier { token, .. } | Command::SetEgress { token, .. } => {
+            rt.check_token(&id, token)
+        }
+        _ => Ok(()),
+    };
+    let out = if let Err(error) = instance_check {
+        Err(error)
+    } else if let Command::SetTier {
         id,
         tier: Tier::Hot,
+        ..
     } = cmd
     {
         // No waiting here: this runs on the loop that applies every
@@ -1011,28 +1042,46 @@ fn run_one(
                     }),
                 }
             }
-            Command::SetEgress { id, egress } => rt.set_egress(id, egress),
-            Command::SetTier { id, tier } => rt.set_tier(id, *tier),
-            Command::Destroy { id, net_index } => {
+            Command::SetEgress { id, egress, .. } => rt.set_egress(id, egress),
+            Command::SetTier { id, tier, .. } => rt.set_tier(id, *tier),
+            Command::Destroy {
+                id,
+                net_index,
+                token,
+            } => {
                 // Off this loop: the commands behind it should not wait for
                 // it. A create straight after a destroy waited out the whole
                 // destroy -- killing the VM, its cgroup, its network -- on
                 // bare metal 25-35 ms of a 70 ms warm start. The sandbox's
                 // own lock is held for the destroy by the thread instead, so
                 // a wake cannot race it, and a repeat while it runs is a
-                // no-op: the master re-sends Destroy until the sandbox is
-                // gone from what this node reports.
-                if DESTROYING.lock().insert(id.clone()) {
-                    rt.quiesce_net(id, *net_index);
-                    let (rt, id, net_index, lock) =
-                        (rt.clone(), id.clone(), *net_index, lock.clone());
+                // no-op: the master re-sends Destroy until it receives the
+                // completion receipt written after cleanup.
+                let key = rt.config().work_dir.join("bundles").join(id);
+                if DESTROYING.lock().insert(key.clone()) {
+                    let (rt, id, net_index, token, lock, wake) = (
+                        rt.clone(),
+                        id.clone(),
+                        *net_index,
+                        token.clone(),
+                        lock.clone(),
+                        wake.clone(),
+                    );
                     std::thread::spawn(move || {
-                        let _held = lock.lock();
-                        if let Err(e) = rt.destroy_with_net(&id, net_index) {
-                            tracing::warn!(sandbox = %id, error = %format!("{e:#}"), "destroy failed; the master will ask again");
+                        let held = lock.lock();
+                        match rt.destroy_instance(&id, net_index, &token) {
+                            Ok(true) => wake.forget(&id),
+                            Ok(false) => {}
+                            Err(e) => {
+                                tracing::warn!(sandbox = %id, error = %format!("{e:#}"), "destroy failed; the master will ask again")
+                            }
                         }
-                        DESTROYING.lock().remove(&id);
+                        DESTROYING.lock().remove(&key);
+                        drop(held);
+                        drop(lock);
                     });
+                } else {
+                    return Step::Later(BACKOFF_MIN);
                 }
                 Ok(())
             }
@@ -1061,10 +1110,6 @@ fn run_one(
             if let Command::Create { spec, .. } = cmd {
                 rt.note_started(&id, memory_limit(spec));
             }
-            if matches!(cmd, Command::Destroy { .. }) {
-                drop(_held);
-                wake.forget(&id);
-            }
             Step::Done
         }
         Err(e) => {
@@ -1074,11 +1119,16 @@ fn run_one(
             // One bad command must not stop the others, but it must not be
             // retried flat out either.
             let entry = failing.entry(id.clone()).or_insert(Failing {
+                token: token.into(),
                 attempts: 0,
                 retry_at: now,
                 error: String::new(),
                 held_back: false,
             });
+            if entry.token != token {
+                entry.token = token.into();
+                entry.attempts = 0;
+            }
             entry.attempts += 1;
             entry.error = format!("{e:#}");
             entry.held_back = e.downcast_ref::<HeldBack>().is_some();
@@ -1295,7 +1345,7 @@ pub(super) async fn expose_created(rt: &Runtime, gw: &mut Gateway, cmd: &Command
 }
 
 /// Sandboxes being destroyed on a thread of their own; see `run_one`.
-static DESTROYING: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<String>>> =
+static DESTROYING: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<PathBuf>>> =
     std::sync::LazyLock::new(Default::default);
 
 /// Held across one create's admission; see `admit`.
@@ -1375,18 +1425,22 @@ mod tests {
             Command::Destroy {
                 id: "sb1".into(),
                 net_index: Some(3),
+                token: String::new(),
             },
             Command::SetTier {
                 id: "sb1".into(),
                 tier: Tier::Frozen,
+                token: String::new(),
             },
             Command::SetTier {
                 id: "sb1".into(),
                 tier: Tier::Snapshot,
+                token: String::new(),
             },
             Command::SetTier {
                 id: "sb1".into(),
                 tier: Tier::Detached,
+                token: String::new(),
             },
         ] {
             assert!(
@@ -1400,7 +1454,8 @@ mod tests {
             8.0,
             &Command::SetTier {
                 id: "sb1".into(),
-                tier: Tier::Hot
+                tier: Tier::Hot,
+                token: String::new(),
             },
             hopeless
         )
@@ -1463,7 +1518,7 @@ mod wake_tests {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
-    fn node(dir: &std::path::Path) -> (NodeConfig, Runtime) {
+    pub(super) fn node(dir: &std::path::Path) -> (NodeConfig, Runtime) {
         let runtime = RuntimeConfig {
             work_dir: dir.join("work"),
             volume_root: dir.join("volumes"),
@@ -1494,6 +1549,7 @@ mod wake_tests {
         Command::SetTier {
             id: "sb".into(),
             tier,
+            token: String::new(),
         }
     }
 
@@ -1652,12 +1708,14 @@ mod wake_tests {
                         id: id.into(),
                         args: vec!["true".into()],
                         timeout_secs: 1,
+                        token: String::new(),
                     }
                 } else {
                     Command::Branch {
                         id: id.into(),
                         tag: "copy".into(),
                         result_id: "result".into(),
+                        token: String::new(),
                     }
                 };
                 run_one(
@@ -2059,6 +2117,7 @@ mod wake_tests {
         failing.insert(
             "bad".to_string(),
             Failing {
+                token: String::new(),
                 attempts: 2,
                 retry_at: Instant::now(),
                 error: "before".into(),

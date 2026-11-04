@@ -23,7 +23,7 @@ use super::backend::{Backend, Runsc};
 use super::bundle::{self, TemplateSpec, WarmSpec};
 use super::firecracker::{self, Firecracker};
 use super::net::{self, NetConfig};
-use crate::proto::{HostInfo, ObservedSandbox};
+use crate::proto::{DestroyedSandbox, HostInfo, ObservedSandbox};
 use crate::tier::Tier;
 
 /// What one sandbox is created from.
@@ -382,6 +382,7 @@ pub struct Runtime {
     egress: Arc<net::EgressRules>,
     /// Sandboxes just started from a warm image; see `drop_warm_image`.
     warm_started: Arc<parking_lot::Mutex<HashMap<String, WarmStart>>>,
+    destroyed: Arc<parking_lot::Mutex<Vec<DestroyedSandbox>>>,
 }
 
 /// Which image a sandbox was started from, and when.
@@ -439,6 +440,7 @@ impl Runtime {
             starting: Arc::default(),
             egress: Arc::default(),
             warm_started: Arc::default(),
+            destroyed: Arc::default(),
         })
     }
 
@@ -539,6 +541,7 @@ impl Runtime {
                 .unwrap_or(false);
             if !running && self.has_snapshot(&id) {
                 found.push(ObservedSandbox {
+                    token: self.sandbox_token(&id)?,
                     ip: self.ip_of(&id),
                     net_index: self.net_index_of(&id),
                     egress: Some(self.egress.of(&id)),
@@ -556,6 +559,7 @@ impl Runtime {
             }
             let frozen = self.is_frozen(&id);
             found.push(ObservedSandbox {
+                token: self.sandbox_token(&id)?,
                 ip: self.ip_of(&id),
                 net_index: self.net_index_of(&id),
                 egress: Some(self.egress.of(&id)),
@@ -702,9 +706,32 @@ impl Runtime {
             token,
             egress,
         } = *req;
+        self.check_create_token(id, token)?;
         let rootfs = self.template_rootfs(template)?;
         let spec: TemplateSpec = serde_json::from_value(spec.clone())
             .with_context(|| format!("template {template} has an unusable spec"))?;
+        if !token.is_empty() && self.sandbox_token(id)?.is_none() {
+            let bundles = self.cfg.work_dir.join("bundles").join(id);
+            std::fs::create_dir_all(&bundles)?;
+            let path = bundles.join("token");
+            // A crash during the write must not leave a partial identity.
+            let pending = bundles.join("token.pending");
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            use std::io::Write;
+            let mut file = options.open(&pending)?;
+            file.write_all(token.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&pending, &path)?;
+            #[cfg(unix)]
+            std::fs::File::open(&bundles)?.sync_all()?;
+        }
         if from_tag.is_some() {
             self.may_restore(id)?;
         }
@@ -752,15 +779,6 @@ impl Runtime {
                     std::fs::write(bundles.join("gateway-port"), gp.to_string())?;
                 }
                 std::fs::write(bundles.join("sandbox-port"), port.to_string())?;
-                if !token.is_empty() {
-                    let tp = bundles.join("token");
-                    std::fs::write(&tp, token)?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        std::fs::set_permissions(&tp, std::fs::Permissions::from_mode(0o600))?;
-                    }
-                }
                 tracing::info!(%id, ip = %slot.sandbox_ip, netns = %slot.netns, "network ready");
                 (
                     Some(format!("/var/run/netns/{}", slot.netns)),
@@ -1597,8 +1615,110 @@ impl Runtime {
         self.engine.exec(id, args, timeout)
     }
 
-    /// Free a sandbox's address now, ahead of a `destroy_with_net` that will
-    /// run later; see `net::quiesce`.
+    pub(super) fn sandbox_token(&self, id: &str) -> Result<Option<String>> {
+        let path = self.cfg.work_dir.join("bundles").join(id).join("token");
+        match std::fs::read_to_string(&path) {
+            Ok(token) if !token.is_empty() => Ok(Some(token)),
+            Ok(_) => Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("reading the instance token for {id}")),
+        }
+    }
+
+    /// Called with the sandbox lock held, including for request/response work.
+    pub(super) fn check_token(&self, id: &str, token: &str) -> Result<()> {
+        let current = self.sandbox_token(id)?;
+        anyhow::ensure!(
+            current.as_deref().unwrap_or("") == token,
+            "{id} belongs to another sandbox instance"
+        );
+        Ok(())
+    }
+
+    fn retired_path(&self, id: &str, token: &str) -> PathBuf {
+        use sha2::{Digest, Sha256};
+        // IDs retain their existing format; hashes keep marker paths beneath retired.
+        self.cfg
+            .work_dir
+            .join("retired")
+            .join(hex::encode(Sha256::digest(id.as_bytes())))
+            .join(hex::encode(Sha256::digest(token.as_bytes())))
+    }
+
+    fn check_create_token(&self, id: &str, token: &str) -> Result<()> {
+        if !token.is_empty() {
+            anyhow::ensure!(
+                !self.retired_path(id, token).try_exists()?,
+                "{id} sandbox instance has already been destroyed"
+            );
+        }
+        if let Some(current) = self.sandbox_token(id)? {
+            anyhow::ensure!(current == token, "{id} belongs to another sandbox instance");
+        } else if !token.is_empty() {
+            anyhow::ensure!(
+                !self
+                    .cfg
+                    .work_dir
+                    .join("bundles")
+                    .join(id)
+                    .join("config.json")
+                    .try_exists()?,
+                "{id} has a legacy sandbox instance awaiting cleanup"
+            );
+        }
+        Ok(())
+    }
+
+    pub(super) fn take_destroyed(&self) -> Vec<DestroyedSandbox> {
+        std::mem::take(&mut *self.destroyed.lock())
+    }
+
+    /// The durable marker makes retries safe even after a node restart or ID reuse.
+    pub(super) fn destroy_instance(
+        &self,
+        id: &str,
+        net_index: Option<u32>,
+        token: &str,
+    ) -> Result<bool> {
+        let marker = if token.is_empty() {
+            None
+        } else {
+            Some(self.retired_path(id, token))
+        };
+        let already_retired = marker
+            .as_ref()
+            .map(|p| p.try_exists())
+            .transpose()?
+            .unwrap_or(false);
+        if !already_retired {
+            if let Some(current) = self.sandbox_token(id)? {
+                anyhow::ensure!(current == token, "{id} belongs to another sandbox instance");
+            }
+            self.quiesce_net(id, net_index);
+            self.destroy_with_net(id, net_index)?;
+            if let Some(path) = &marker {
+                let directory = path.parent().unwrap();
+                std::fs::create_dir_all(directory)?;
+                std::fs::File::create(path)?.sync_all()?;
+                #[cfg(unix)]
+                for directory in [
+                    directory,
+                    directory.parent().unwrap(),
+                    self.cfg.work_dir.as_path(),
+                ] {
+                    std::fs::File::open(directory)?.sync_all()?;
+                }
+            }
+        }
+        if !token.is_empty() {
+            self.destroyed.lock().push(DestroyedSandbox {
+                id: id.into(),
+                token: token.into(),
+            });
+        }
+        Ok(!already_retired)
+    }
+
     /// Replace what a sandbox may reach, in any tier: rules follow its
     /// address, which it keeps while it exists.
     pub fn set_egress(&self, id: &str, egress: &crate::proto::Egress) -> Result<()> {
@@ -1609,6 +1729,7 @@ impl Runtime {
             .set(id, self.cfg.net.slot(id, index)?.sandbox_ip, egress)
     }
 
+    /// Stop routing to an instance before removing its network.
     pub fn quiesce_net(&self, id: &str, net_index: Option<u32>) {
         if let Some(i) = net_index.or_else(|| self.net_index_of(id)) {
             let _ = net::quiesce(&self.cfg.net, id, i);
@@ -1786,32 +1907,69 @@ impl Runtime {
         // regardless of what the backend thinks.
         let cg = self.cgroup_path(id);
         if cg.exists() {
-            if std::fs::write(cg.join("cgroup.kill"), "1").is_ok() {
-                // The kill is asynchronous; wait for the cgroup to empty so
-                // the port is really free before we report success.
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while Instant::now() < deadline {
-                    let empty = std::fs::read_to_string(cg.join("cgroup.procs"))
-                        .map(|s| s.trim().is_empty())
-                        .unwrap_or(true);
-                    if empty {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-            std::fs::remove_dir(&cg).ok();
+            std::fs::write(cg.join("cgroup.kill"), "1")
+                .with_context(|| format!("killing the cgroup for {id}"))?;
+            wait_for_empty_cgroup(&cg, Duration::from_secs(5))?;
+            remove_empty_cgroup_tree(&cg)
+                .with_context(|| format!("removing the cgroup for {id}"))?;
         }
         self.drop_snapshot(id);
         self.engine.teardown(&self.cfg, id)?;
+        for path in [
+            self.cfg.work_dir.join("bundles").join(id),
+            self.engine.layer(&self.cfg, id),
+            self.cfg.work_dir.join("snapshots").join(id),
+        ] {
+            anyhow::ensure!(
+                !path.try_exists()?,
+                "sandbox cleanup left {} behind",
+                path.display()
+            );
+        }
         // The archived layer is ours; the volume's /workspace is the user's
         // and is left alone.
         if let Some(d) = self.archive_path(id).parent() {
-            std::fs::remove_dir_all(d).ok();
+            match std::fs::remove_dir_all(d) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).context("removing the sandbox archive"),
+            }
         }
         tracing::info!(%id, "destroyed");
         Ok(())
     }
+}
+
+fn wait_for_empty_cgroup(path: &Path, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let events = match std::fs::read_to_string(path.join("cgroup.events")) {
+            Ok(events) => events,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !path.try_exists()? => {
+                return Ok(())
+            }
+            Err(e) => return Err(e).context("checking whether the sandbox cgroup is empty"),
+        };
+        if events.lines().any(|line| line.trim() == "populated 0") {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "sandbox cgroup still has running processes"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn remove_empty_cgroup_tree(path: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            remove_empty_cgroup_tree(&entry.path())?;
+        }
+    }
+    std::fs::remove_dir(path)?;
+    Ok(())
 }
 
 /// The fingerprint alone; see `host`.
@@ -2015,6 +2173,7 @@ mod backend_tests {
         Mutex<Vec<String>>,
         std::sync::atomic::AtomicBool,
         std::sync::atomic::AtomicBool,
+        std::sync::atomic::AtomicBool,
     );
 
     impl Recorder {
@@ -2044,7 +2203,9 @@ mod backend_tests {
             Ok(())
         }
         fn teardown(&self, cfg: &RuntimeConfig, id: &str) -> Result<()> {
-            std::fs::remove_dir_all(cfg.work_dir.join("bundles").join(id)).ok();
+            if !self.3.load(std::sync::atomic::Ordering::Relaxed) {
+                std::fs::remove_dir_all(cfg.work_dir.join("bundles").join(id)).ok();
+            }
             Ok(())
         }
         fn boot(&self, id: &str, _: &Path) -> Result<()> {
@@ -2085,6 +2246,184 @@ mod backend_tests {
             self.log(format!("exec {id} {}", args.join(" ")));
             Ok((String::new(), String::new(), 0))
         }
+    }
+
+    #[test]
+    fn retired_instances_cannot_execute_destroy_or_recreate_a_reused_id() {
+        use crate::node::{run_one, Step, Wakeups};
+        use crate::proto::Command;
+
+        let directory = TempDir::new().unwrap();
+        let (cfg, _) = crate::node::wake_tests::node(directory.path());
+        let recorder = Arc::new(Recorder::default());
+        let runtime = Runtime::with_backend(cfg.runtime.clone(), recorder.clone()).unwrap();
+        std::fs::create_dir_all(cfg.runtime.work_dir.join("templates/py/rootfs")).unwrap();
+        let spec = serde_json::json!({"args": ["true"]});
+        let create = |runtime: &Runtime, token| {
+            runtime.create(&CreateRequest {
+                id: "id-reuse-test",
+                template: "py",
+                spec: &spec,
+                port: 8080,
+                volume: None,
+                net_index: None,
+                from_tag: None,
+                gateway_port: None,
+                token,
+                egress: &Default::default(),
+            })
+        };
+        let bundle = runtime.config().work_dir.join("bundles/id-reuse-test");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("token.pending"), "partial").unwrap();
+        create(&runtime, "old-token").unwrap();
+        assert_eq!(
+            runtime.sandbox_token("id-reuse-test").unwrap().as_deref(),
+            Some("old-token")
+        );
+        runtime
+            .destroy_instance("id-reuse-test", None, "old-token")
+            .unwrap();
+        let receipts = runtime.take_destroyed();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].token, "old-token");
+        assert!(runtime.take_destroyed().is_empty());
+
+        // Reopen from disk after losing the receipt, then create a new instance.
+        drop(runtime);
+        let runtime = Runtime::with_backend(cfg.runtime.clone(), recorder.clone()).unwrap();
+        runtime
+            .destroy_instance("id-reuse-test", None, "old-token")
+            .unwrap();
+        assert_eq!(runtime.take_destroyed().len(), 1);
+        create(&runtime, "new-token").unwrap();
+        recorder.0.lock().clear();
+        let wake = Arc::new(Wakeups::new(|_, _, _| Ok(())));
+        for token in ["old-token", ""] {
+            let command = Command::Exec {
+                exec_id: "exec".into(),
+                id: "id-reuse-test".into(),
+                token: token.into(),
+                args: vec!["true".into()],
+                timeout_secs: 1,
+            };
+            let result = run_one(
+                &cfg,
+                &runtime,
+                &mut HashMap::new(),
+                &wake,
+                &command,
+                Instant::now(),
+            );
+            assert!(
+                matches!(result, Step::Answered(result) if result.exit_code == -1 && result.stderr.contains("another sandbox instance"))
+            );
+        }
+        runtime
+            .destroy_instance("id-reuse-test", None, "old-token")
+            .unwrap();
+        assert!(runtime.destroy_instance("id-reuse-test", None, "").is_err());
+        assert!(create(&runtime, "old-token").is_err());
+        assert!(
+            recorder.0.lock().is_empty(),
+            "old commands must not reach the backend"
+        );
+        assert_eq!(
+            runtime.sandbox_token("id-reuse-test").unwrap().as_deref(),
+            Some("new-token")
+        );
+        let stale = Command::SetEgress {
+            id: "id-reuse-test".into(),
+            token: "old-token".into(),
+            egress: Default::default(),
+        };
+        let mut failing = HashMap::new();
+        assert!(matches!(
+            run_one(&cfg, &runtime, &mut failing, &wake, &stale, Instant::now()),
+            Step::Later(_)
+        ));
+        // Backoff for a retired command must not defer the new instance.
+        let command = Command::Exec {
+            exec_id: "exec-new".into(),
+            id: "id-reuse-test".into(),
+            token: "new-token".into(),
+            args: vec!["true".into()],
+            timeout_secs: 1,
+        };
+        assert!(
+            matches!(run_one(&cfg, &runtime, &mut failing, &wake, &command, Instant::now()), Step::Answered(result) if result.exit_code == 0)
+        );
+        assert_eq!(*recorder.0.lock(), ["exec id-reuse-test true"]);
+    }
+
+    #[test]
+    fn failed_cleanup_never_records_a_completion_receipt() {
+        let directory = TempDir::new().unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let runtime = Runtime::with_backend(
+            RuntimeConfig {
+                work_dir: directory.path().join("work"),
+                volume_root: directory.path().join("volumes"),
+                ..Default::default()
+            },
+            recorder.clone(),
+        )
+        .unwrap();
+        let bundle = runtime.config().work_dir.join("bundles/id-cleanup-test");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("token"), "old-token").unwrap();
+        recorder.3.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(runtime
+            .destroy_instance("id-cleanup-test", None, "old-token")
+            .is_err());
+        assert!(runtime.take_destroyed().is_empty());
+        assert!(!runtime
+            .retired_path("id-cleanup-test", "old-token")
+            .exists());
+        recorder
+            .3
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        runtime
+            .destroy_instance("id-cleanup-test", None, "old-token")
+            .unwrap();
+        assert_eq!(runtime.take_destroyed().len(), 1);
+        for (id, token) in [
+            ("../escape", "old-token"),
+            ("safe", "../../escape"),
+            ("safe", "C:escape"),
+            ("a:valid-id", "old-token"),
+        ] {
+            let marker = runtime.retired_path(id, token);
+            let retired = runtime.config().work_dir.join("retired");
+            let components: Vec<_> = marker.strip_prefix(retired).unwrap().components().collect();
+            assert_eq!(components.len(), 2);
+            assert!(components.iter().all(|component| {
+                let name = component.as_os_str().to_str().unwrap();
+                name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }));
+        }
+        assert_ne!(
+            runtime.retired_path("safe", "old"),
+            runtime.retired_path("safe", "new")
+        );
+    }
+
+    #[test]
+    fn a_nonempty_or_unreadable_cgroup_is_not_destroyed() {
+        let directory = TempDir::new().unwrap();
+        assert!(wait_for_empty_cgroup(directory.path(), Duration::ZERO).is_err());
+        std::fs::write(
+            directory.path().join("cgroup.events"),
+            "populated 1\nfrozen 0\n",
+        )
+        .unwrap();
+        assert!(wait_for_empty_cgroup(directory.path(), Duration::ZERO).is_err());
+        std::fs::write(
+            directory.path().join("cgroup.events"),
+            "populated 0\nfrozen 0\n",
+        )
+        .unwrap();
+        wait_for_empty_cgroup(directory.path(), Duration::ZERO).unwrap();
     }
 
     /// It would otherwise run where nothing can reach it, and be reported as

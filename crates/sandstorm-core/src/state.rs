@@ -271,6 +271,16 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_sandboxes_tier ON sandboxes(tier);
             CREATE INDEX IF NOT EXISTS idx_sandboxes_idle ON sandboxes(last_active_at);
 
+            -- Reserve deleted IDs and node-local slots until the node has
+            -- completed removal of this exact creation token.
+            CREATE TABLE IF NOT EXISTS sandbox_deletions (
+                id TEXT PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                token TEXT NOT NULL,
+                net_index INTEGER,
+                gateway_port INTEGER
+            );
+
             -- Which pool each node was in, and when. History is kept per
             -- node (series.rs), so this is what lets the console add it up
             -- per pool: a node that moved pools counts toward each for the
@@ -811,6 +821,11 @@ impl Store {
     // ---- sandboxes ------------------------------------------------------
 
     pub fn insert_sandbox(&self, s: &Sandbox) -> Result<()> {
+        anyhow::ensure!(
+            !self.sandbox_deletion_pending(&s.id)?,
+            "sandbox {} is waiting for cleanup",
+            s.id
+        );
         self.conn.execute(
             "INSERT INTO sandboxes
                 (id, node_id, pool, template, tier, token, volume, port,
@@ -974,6 +989,8 @@ impl Store {
         let sql = format!(
             "SELECT {column} FROM sandboxes
              WHERE node_id=?1 AND {column} IS NOT NULL AND {column} BETWEEN ?2 AND ?3
+             UNION SELECT {column} FROM sandbox_deletions
+             WHERE node_id=?1 AND {column} IS NOT NULL AND {column} BETWEEN ?2 AND ?3
              ORDER BY {column}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -1044,11 +1061,45 @@ impl Store {
     }
 
     pub fn delete_sandbox(&self, id: &str) -> Result<()> {
+        let tx = self.transaction()?;
+        self.conn.execute(
+            "INSERT INTO sandbox_deletions (id, node_id, token, net_index, gateway_port)
+             SELECT id, node_id, token, net_index, gateway_port FROM sandboxes WHERE id=?1",
+            params![id],
+        )?;
         self.conn
             .execute("DELETE FROM sandboxes WHERE id=?1", params![id])?;
         // Whichever API deleted it, the E2B view of it goes too.
         self.conn
             .execute("DELETE FROM e2b_sandboxes WHERE id=?1", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn sandbox_deletion_pending(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sandbox_deletions WHERE id=?1)",
+            params![id],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn sandbox_deletions_on_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<(String, String, Option<u32>)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, token, net_index FROM sandbox_deletions WHERE node_id=?1")?;
+        let rows = stmt.query_map(params![node_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn complete_sandbox_deletion(&self, node_id: &str, id: &str, token: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM sandbox_deletions WHERE node_id=?1 AND id=?2 AND token=?3",
+            params![node_id, id, token],
+        )?;
         Ok(())
     }
 
@@ -1764,18 +1815,30 @@ mod tests {
         assert_eq!(seen.len(), 5);
     }
 
-    /// A port freed by a deleted sandbox is available again.
+    /// Ports and network slots stay reserved until cleanup is confirmed.
     #[test]
-    fn deleting_a_sandbox_frees_its_port() {
+    fn deleting_a_sandbox_reserves_its_slots_until_cleanup() {
         let s = Store::open_in_memory().unwrap();
         let mut a = sb("sb1", "node-a");
         a.gateway_port = Some(20000);
+        a.net_index = Some(0);
         s.insert_sandbox(&a).unwrap();
         assert_eq!(
             s.allocate_gateway_port("node-a", 20000, 20010).unwrap(),
             Some(20001)
         );
         s.delete_sandbox("sb1").unwrap();
+        assert!(s.sandbox_deletion_pending("sb1").unwrap());
+        assert!(s.insert_sandbox(&a).is_err());
+        assert_eq!(
+            s.allocate_gateway_port("node-a", 20000, 20010).unwrap(),
+            Some(20001)
+        );
+        assert_eq!(s.allocate_net_index("node-a", 10).unwrap(), Some(1));
+        s.complete_sandbox_deletion("node-a", "sb1", &a.token)
+            .unwrap();
+        assert!(!s.sandbox_deletion_pending("sb1").unwrap());
+        assert_eq!(s.allocate_net_index("node-a", 10).unwrap(), Some(0));
         assert_eq!(
             s.allocate_gateway_port("node-a", 20000, 20010).unwrap(),
             Some(20000)

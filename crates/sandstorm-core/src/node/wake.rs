@@ -398,7 +398,15 @@ impl Wakeups {
 
     /// A destroyed sandbox needs none of this any more.
     pub fn forget(&self, id: &str) {
-        self.locks.lock().remove(id);
+        let mut locks = self.locks.lock();
+        // A waiter must keep sharing the old lock when this ID is created again.
+        if locks
+            .get(id)
+            .is_some_and(|lock| Arc::strong_count(lock) == 1)
+        {
+            locks.remove(id);
+        }
+        drop(locks);
         self.seen.lock().remove(id);
         self.used.lock().remove(id);
         self.fresh.lock().remove(id);
@@ -573,6 +581,7 @@ mod tests {
 
     fn seen(id: &str, tier: Tier) -> ObservedSandbox {
         ObservedSandbox {
+            token: None,
             id: id.into(),
             tier,
             serving: tier.is_serving(),
@@ -580,6 +589,17 @@ mod tests {
             net_index: None,
             egress: None,
         }
+    }
+
+    #[test]
+    fn forgetting_a_sandbox_preserves_the_lock_held_by_existing_waiters() {
+        let wake = Wakeups::new(|_, _, _| Ok(()));
+        let waiting = wake.lock("reused");
+        wake.forget("reused");
+        assert!(Arc::ptr_eq(&waiting, &wake.lock("reused")));
+        drop(waiting);
+        wake.forget("reused");
+        assert!(!wake.locks.lock().contains_key("reused"));
     }
 
     /// Frozen goes before Hot, and within each the one least in demand:

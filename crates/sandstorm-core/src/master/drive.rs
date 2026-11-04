@@ -77,7 +77,7 @@ pub(super) fn start(st: St, node: AgentNode) {
 /// Commands for the node, computed exactly as `poll` computes them.
 fn next_batch(st: &St, report: &PollRequest) -> Result<Vec<Command>> {
     let mut commands = diff(st, report).map_err(|(_, e)| anyhow::anyhow!("{}", e.0))?;
-    commands.extend(take_execs(st, &report.node_id));
+    commands.extend(take_execs(st, report).map_err(|(_, e)| anyhow::anyhow!("{}", e.0))?);
     Ok(commands)
 }
 
@@ -217,6 +217,7 @@ mod tests {
         let exec = |t| Command::Exec {
             exec_id: "e".into(),
             id: "sb".into(),
+            token: String::new(),
             args: vec!["true".into()],
             timeout_secs: t,
         };
@@ -232,6 +233,7 @@ mod tests {
         let destroy = |id: &str| Command::Destroy {
             id: id.into(),
             net_index: None,
+            token: String::new(),
         };
         assert!(same_batch(&[destroy("a")], &[destroy("a")]));
         assert!(!same_batch(&[destroy("a")], &[destroy("b")]));
