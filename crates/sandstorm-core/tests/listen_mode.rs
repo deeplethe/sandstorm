@@ -77,11 +77,17 @@ async fn fake_sync(
     if let Some(cmds) = req.commands {
         for c in &cmds {
             match c {
-                Command::Create { id, net_index, .. } => {
+                Command::Create {
+                    id,
+                    net_index,
+                    token,
+                    ..
+                } => {
                     s.held.insert(
                         id.clone(),
                         ObservedSandbox {
                             id: id.clone(),
+                            token: Some(token.clone()),
                             tier: Tier::Hot,
                             serving: true,
                             ip: Some("10.86.0.2".into()),
@@ -93,7 +99,7 @@ async fn fake_sync(
                 Command::Destroy { id, .. } => {
                     s.held.remove(id);
                 }
-                Command::SetTier { id, tier } => {
+                Command::SetTier { id, tier, .. } => {
                     if let Some(o) = s.held.get_mut(id) {
                         o.tier = *tier;
                     }
@@ -105,6 +111,7 @@ async fn fake_sync(
     }
     Ok(Json(SyncResponse {
         report: PollRequest {
+            destroyed: vec![],
             // Deliberately wrong: the master must decide which node this is
             // from where it connected, not from what the body claims.
             node_id: "someone-else".into(),

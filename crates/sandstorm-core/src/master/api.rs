@@ -843,13 +843,16 @@ pub const SANDBOX_TOKEN_HEADER: &str = "x-sandstorm-sandbox-token";
 /// Mandatory by design. v0.5's traffic token was opt-in, so every sandbox
 /// made before anyone turned it on was open; the RFC removes that mode
 /// rather than defaulting it on.
-fn require_sandbox_token(st: &St, id: &str, headers: &axum::http::HeaderMap) -> Result<(), ApiErr> {
+fn require_sandbox_token(
+    st: &St,
+    id: &str,
+    headers: &axum::http::HeaderMap,
+) -> Result<Sandbox, ApiErr> {
     let expected = {
         let store = st.store();
         store
             .get_sandbox(id)
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .map(|s| s.token)
     };
     let Some(expected) = expected else {
         return Err(err(StatusCode::NOT_FOUND, format!("no sandbox {id}")));
@@ -858,8 +861,8 @@ fn require_sandbox_token(st: &St, id: &str, headers: &axum::http::HeaderMap) -> 
         .get(SANDBOX_TOKEN_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
-    if crate::auth::secrets_match(presented, &expected) {
-        return Ok(());
+    if crate::auth::secrets_match(presented, &expected.token) {
+        return Ok(expected);
     }
     // 403 rather than 404: the caller already proved it may talk to this
     // API, and pretending the sandbox does not exist would only make a
@@ -1737,7 +1740,7 @@ async fn poll(
 
     let mut commands = diff(&st, &req)?;
     leave_out_deferred(&mut commands, &req, Duration::ZERO);
-    commands.extend(take_execs(&st, &req.node_id));
+    commands.extend(take_execs(&st, &req)?);
     if !commands.is_empty() {
         return Ok(Json(PollResponse { commands }));
     }
@@ -1752,7 +1755,7 @@ async fn poll(
     }
     let mut commands = diff(&st, &req)?;
     leave_out_deferred(&mut commands, &req, parked.elapsed());
-    commands.extend(take_execs(&st, &req.node_id));
+    commands.extend(take_execs(&st, &req)?);
     Ok(Json(PollResponse { commands }))
 }
 
@@ -1805,12 +1808,47 @@ async fn node_traffic(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) fn take_execs(st: &St, node_id: &str) -> Vec<Command> {
+pub(super) fn take_execs(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
+    let store = st.store();
     let mut q = st.exec_queue.lock();
-    match q.get_mut(node_id) {
-        Some(d) => d.drain(..).collect(),
-        None => Vec::new(),
+    let Some(queue) = q.get_mut(&req.node_id) else {
+        return Ok(Vec::new());
+    };
+    let mut commands = Vec::new();
+    let mut waiting = VecDeque::new();
+    while let Some(cmd) = queue.pop_front() {
+        let (id, token, result_id) = match &cmd {
+            Command::Exec {
+                id, token, exec_id, ..
+            } => (id, token, exec_id),
+            Command::Branch {
+                id,
+                token,
+                result_id,
+                ..
+            } => (id, token, result_id),
+            _ => {
+                commands.push(cmd);
+                continue;
+            }
+        };
+        let sb = store
+            .get_sandbox(id)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !sb.is_some_and(|s| s.node_id == req.node_id && s.token == *token) {
+            st.pending_exec.lock().remove(result_id);
+        } else if req
+            .observed
+            .iter()
+            .any(|o| o.id == *id && o.token.as_ref().is_some_and(|t| t != token))
+        {
+            waiting.push_back(cmd);
+        } else {
+            commands.push(cmd);
+        }
     }
+    *queue = waiting;
+    Ok(commands)
 }
 
 #[derive(Deserialize)]
@@ -1907,11 +1945,11 @@ async fn exec_sandbox(
     headers: axum::http::HeaderMap,
     Json(req): Json<ExecReq>,
 ) -> Result<Json<ExecView>, ApiErr> {
-    require_sandbox_token(&st, &id, &headers)?;
+    let sandbox = require_sandbox_token(&st, &id, &headers)?;
     if req.args.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "args must not be empty"));
     }
-    let r = run_exec(&st, &id, req.args, req.timeout_secs).await?;
+    let r = run_exec(&st, &id, &sandbox.token, req.args, req.timeout_secs).await?;
     Ok(Json(ExecView {
         stdout: r.stdout,
         stderr: r.stderr,
@@ -1925,10 +1963,13 @@ async fn exec_sandbox(
 async fn run_exec(
     st: &St,
     id: &str,
+    token: &str,
     args: Vec<String>,
     timeout_secs: u64,
 ) -> Result<CommandResult, ApiErr> {
-    let (node_id, tier) = {
+    let exec_id = random_token();
+    let (tx, rx) = oneshot::channel();
+    let node_id = {
         let store = st.store();
         let Some(sb) = store
             .get_sandbox(id)
@@ -1936,33 +1977,36 @@ async fn run_exec(
         else {
             return Err(err(StatusCode::NOT_FOUND, "no such sandbox"));
         };
-        (sb.node_id, sb.tier)
-    };
-    // A command can only run in a sandbox that is running. Promoting first
-    // would hide a multi-second wait inside what looks like a quick call,
-    // so say so instead and let the caller decide.
-    if tier != Tier::Hot {
-        return Err(err(
-            StatusCode::CONFLICT,
-            format!("sandbox is {tier}; POST /v1/sandboxes/{id}/touch to bring it hot first"),
-        ));
-    }
+        if sb.token != token {
+            return Err(err(StatusCode::FORBIDDEN, "sandbox was replaced"));
+        }
+        // A command can only run in a sandbox that is running. Promoting first
+        // would hide a multi-second wait inside what looks like a quick call,
+        // so say so instead and let the caller decide.
+        if sb.tier != Tier::Hot {
+            return Err(err(
+                StatusCode::CONFLICT,
+                format!(
+                    "sandbox is {}; POST /v1/sandboxes/{id}/touch to bring it hot first",
+                    sb.tier
+                ),
+            ));
+        }
 
-    let exec_id = random_token();
-    let (tx, rx) = oneshot::channel();
-    {
         st.pending_exec.lock().insert(exec_id.clone(), tx);
         st.exec_queue
             .lock()
-            .entry(node_id.clone())
+            .entry(sb.node_id.clone())
             .or_default()
             .push_back(Command::Exec {
                 exec_id: exec_id.clone(),
                 id: id.to_string(),
+                token: sb.token,
                 args,
                 timeout_secs,
             });
-    }
+        sb.node_id
+    };
     st.wake_node(&node_id);
 
     // The node's own timeout plus room for a round trip and a loaded node.
@@ -2041,7 +2085,7 @@ async fn eval_sandbox(
     headers: axum::http::HeaderMap,
     Json(req): Json<EvalReq>,
 ) -> Result<Json<EvalView>, ApiErr> {
-    require_sandbox_token(&st, &id, &headers)?;
+    let sandbox = require_sandbox_token(&st, &id, &headers)?;
     let argv = {
         let store = st.store();
         let Some(sb) = store
@@ -2063,7 +2107,7 @@ async fn eval_sandbox(
         argv
     };
 
-    let r = run_exec(&st, &id, argv, req.timeout_secs).await?;
+    let r = run_exec(&st, &id, &sandbox.token, argv, req.timeout_secs).await?;
     Ok(Json(if r.exit_code == 0 {
         EvalView {
             result: Some(r.stdout),
@@ -2105,16 +2149,10 @@ async fn ping_sandbox(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<PingView>, ApiErr> {
-    require_sandbox_token(&st, &id, &headers)?;
+    let sandbox = require_sandbox_token(&st, &id, &headers)?;
     let t0 = std::time::Instant::now();
     let (tier, addr) = {
-        let store = st.store();
-        let Some(sb) = store
-            .get_sandbox(&id)
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        else {
-            return Err(err(StatusCode::NOT_FOUND, "no such sandbox"));
-        };
+        let sb = sandbox;
         let addr = match (sb.ip.as_deref(), sb.port) {
             (Some(ip), Some(port)) => Some(format!("{ip}:{port}")),
             _ => None,
@@ -2243,7 +2281,7 @@ async fn branch_sandbox(
         ));
     }
 
-    let (node_id, template, tier, port) = {
+    let (node_id, template, tier, port, token) = {
         let store = st.store();
         if store
             .get_snapshot(&req.tag)
@@ -2261,7 +2299,7 @@ async fn branch_sandbox(
         else {
             return Err(err(StatusCode::NOT_FOUND, "no such sandbox"));
         };
-        (sb.node_id, sb.template, sb.tier, sb.port)
+        (sb.node_id, sb.template, sb.tier, sb.port, sb.token)
     };
 
     // Only a running sandbox has memory to checkpoint.
@@ -2282,6 +2320,7 @@ async fn branch_sandbox(
             .or_default()
             .push_back(Command::Branch {
                 id: id.clone(),
+                token,
                 tag: req.tag.clone(),
                 result_id: result_id.clone(),
             });
@@ -2410,11 +2449,31 @@ pub(super) fn record_failures(st: &St, req: &PollRequest) -> Result<(), ApiErr> 
     let failing: std::collections::HashSet<&str> =
         req.failures.iter().map(|f| f.id.as_str()).collect();
     for id in store.errored_on_node(&req.node_id).map_err(ise)? {
-        if !failing.contains(id.as_str()) && req.observed.iter().any(|o| o.id == id) {
+        let Some(sb) = store.get_sandbox(&id).map_err(ise)? else {
+            continue;
+        };
+        if !failing.contains(id.as_str())
+            && req
+                .observed
+                .iter()
+                .any(|o| o.id == id && o.token.as_ref().is_none_or(|t| *t == sb.token))
+        {
             store.clear_sandbox_error(&id).map_err(ise)?;
         }
     }
     for f in &req.failures {
+        let Some(sb) = store.get_sandbox(&f.id).map_err(ise)? else {
+            continue;
+        };
+        if sb.node_id != req.node_id
+            || f.token.as_ref().is_some_and(|t| *t != sb.token)
+            || req
+                .observed
+                .iter()
+                .any(|o| o.id == f.id && o.token.as_ref().is_some_and(|t| *t != sb.token))
+        {
+            continue;
+        }
         if f.held_back {
             store.set_sandbox_error(&f.id, &f.error, 0).map_err(ise)?;
             continue;
@@ -2472,6 +2531,13 @@ pub(super) fn apply_traffic(st: &St, req: &PollRequest) -> Result<(), ApiErr> {
             tracing::warn!(sandbox = %id, node = %req.node_id, holder = %sb.node_id, "ignored traffic reported by a node that does not hold the sandbox");
             continue;
         }
+        if req
+            .observed
+            .iter()
+            .any(|o| &o.id == id && o.token.as_ref().is_some_and(|t| *t != sb.token))
+        {
+            continue;
+        }
         store.touch(id).map_err(ise)?;
         let serving = req
             .observed
@@ -2513,6 +2579,9 @@ pub(super) fn apply_evictions(st: &St, req: &PollRequest) -> Result<(), ApiErr> 
         let Some(seen) = req.observed.iter().find(|o| &o.id == id) else {
             continue;
         };
+        if seen.token.as_ref().is_some_and(|t| *t != sb.token) {
+            continue;
+        }
         if seen.tier > sb.tier {
             tracing::info!(sandbox = %id, node = %req.node_id, was = %sb.tier, now = %seen.tier, "put to disk by its node to make room for a wake");
             store.set_tier(id, seen.tier).map_err(ise)?;
@@ -2548,6 +2617,11 @@ fn record_host(
 /// store lock is never held across an await.
 pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
     let store = st.store();
+    for done in &req.destroyed {
+        store
+            .complete_sandbox_deletion(&req.node_id, &done.id, &done.token)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
     store
         .set_node_health(&req.node_id, req.free_memory_mib, req.pressure_some_avg10)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2589,6 +2663,15 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
 
     // The node owns addressing, so what it reports is the truth.
     for o in &req.observed {
+        let Some(current) = store
+            .get_sandbox(&o.id)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        else {
+            continue;
+        };
+        if current.node_id != req.node_id || o.token.as_ref().is_some_and(|t| *t != current.token) {
+            continue;
+        }
         if let Some(ip) = o.ip.as_deref() {
             store
                 .set_sandbox_ip(&o.id, ip)
@@ -2602,6 +2685,17 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
 
     let mut commands = pulls_for(&store, req)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let deletions = store
+        .sandbox_deletions_on_node(&req.node_id)
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Empty observation does not prove asynchronous cleanup completed.
+    for (id, token, net_index) in &deletions {
+        commands.push(Command::Destroy {
+            id: id.clone(),
+            token: token.clone(),
+            net_index: *net_index,
+        });
+    }
     // Where each tag forked here comes from, looked up once per diff.
     let mut sources: HashMap<String, Option<FetchFrom>> = HashMap::new();
     for want in &desired {
@@ -2669,11 +2763,19 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
                     egress: want.egress.clone(),
                 })
             }
+            Some(got) if got.token.as_ref().is_some_and(|t| *t != want.token) => {
+                commands.push(Command::Destroy {
+                    id: got.id.clone(),
+                    token: got.token.clone().unwrap_or_default(),
+                    net_index: got.net_index,
+                });
+            }
             Some(got) => {
                 if got.tier != want.tier {
                     commands.push(Command::SetTier {
                         id: want.id.clone(),
                         tier: want.tier,
+                        token: want.token.clone(),
                     });
                 }
                 // Rules are what a node reports, not what it was last sent,
@@ -2682,6 +2784,7 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
                     commands.push(Command::SetEgress {
                         id: want.id.clone(),
                         egress: want.egress.clone(),
+                        token: want.token.clone(),
                     });
                 }
             }
@@ -2690,13 +2793,16 @@ pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
     // Anything the node holds that we no longer want. Adoption means we only
     // ever destroy what desired state has actually dropped.
     for got in &req.observed {
-        if !desired.iter().any(|d| d.id == got.id) {
+        if !desired.iter().any(|d| d.id == got.id)
+            && !deletions.iter().any(|(id, _, _)| *id == got.id)
+        {
             // The node also needs to know which slot to reclaim; look it
             // up, since an observed-but-undesired sandbox has no row to
             // read it from once desired state has dropped it.
             commands.push(Command::Destroy {
                 id: got.id.clone(),
                 net_index: got.net_index,
+                token: got.token.clone().unwrap_or_default(),
             });
         }
     }
@@ -3016,6 +3122,17 @@ pub(super) async fn create_sandbox(
     };
 
     let store = st.store();
+
+    if let Some(id) = &req.id {
+        if store
+            .sandbox_deletion_pending(id)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            return Err(err(StatusCode::CONFLICT, format!(
+                "sandbox {id} is waiting for cleanup on its previous node; retry after cleanup completes"
+            )));
+        }
+    }
 
     // Where the children may go. A template goes to its pool. A fork goes
     // to any node whose fingerprint matches the tag's, fetching the image
@@ -3874,6 +3991,7 @@ mod deferred_tests {
         Command::Destroy {
             id: id.into(),
             net_index: None,
+            token: String::new(),
         }
     }
 
@@ -3915,5 +4033,59 @@ mod deferred_tests {
         let req = asking(&[("a", 500), ("b", 2000)]);
         assert_eq!(left(&req, Duration::from_millis(499)), Vec::<String>::new());
         assert_eq!(left(&req, Duration::from_millis(500)), ["a"]);
+    }
+}
+
+#[cfg(test)]
+mod incarnation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_request_authenticated_before_recreation_cannot_queue_for_the_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Arc::new(MasterState::new(
+            Store::open_in_memory().unwrap(),
+            Ca::open_or_create(dir.path()).unwrap(),
+            MasterOptions::default(),
+        ));
+        let mut sandbox = Sandbox {
+            id: "demo".into(),
+            node_id: "N".into(),
+            pool: "default".into(),
+            template: "A".into(),
+            tier: Tier::Hot,
+            token: "old-token".into(),
+            volume: None,
+            port: None,
+            gateway_port: None,
+            created_at: 0,
+            last_active_at: 0,
+            last_error: None,
+            error_attempts: 0,
+            net_index: None,
+            ip: None,
+            from_tag: None,
+            memory_limit_mib: None,
+            egress: Egress::default(),
+        };
+        st.store().insert_sandbox(&sandbox).unwrap();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(SANDBOX_TOKEN_HEADER, "old-token".parse().unwrap());
+        let authenticated = require_sandbox_token(&st, "demo", &headers).unwrap();
+        {
+            let store = st.store();
+            store.delete_sandbox("demo").unwrap();
+            store
+                .complete_sandbox_deletion("N", "demo", "old-token")
+                .unwrap();
+            sandbox.token = "new-token".into();
+            store.insert_sandbox(&sandbox).unwrap();
+        }
+        let (status, _) = run_exec(&st, "demo", &authenticated.token, vec!["true".into()], 1)
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(st.exec_queue.lock().is_empty());
+        assert!(st.pending_exec.lock().is_empty());
     }
 }

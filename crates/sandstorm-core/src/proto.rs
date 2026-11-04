@@ -108,6 +108,10 @@ pub struct SyncResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PollRequest {
     pub node_id: String,
+    /// Completed removals, reported only after the old instance and its
+    /// resources are gone. A missing observation is not a completion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub destroyed: Vec<DestroyedSandbox>,
     /// Observed, not remembered. The master compares this against desired
     /// state rather than trusting its own cache.
     pub observed: Vec<ObservedSandbox>,
@@ -251,6 +255,8 @@ pub struct Deferred {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandFailure {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
     pub error: String,
     /// How many times in a row this sandbox has failed. The node backs off
     /// on its own; this tells the master how bad it is.
@@ -267,6 +273,8 @@ pub struct CommandFailure {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservedSandbox {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
     pub tier: Tier,
     pub serving: bool,
     /// The address the node gave it. The node owns addressing, so this is
@@ -422,12 +430,27 @@ pub enum Command {
     },
     /// Replace what a sandbox may reach. Declarative, like `SetTier`: the
     /// master sends it while a node reports anything else.
-    SetEgress { id: String, egress: Egress },
+    SetEgress {
+        id: String,
+        egress: Egress,
+        #[serde(default)]
+        token: String,
+    },
     /// Move an existing sandbox to a tier. One step at a time when demoting;
     /// promotion goes straight to hot.
-    SetTier { id: String, tier: Tier },
+    SetTier {
+        id: String,
+        tier: Tier,
+        #[serde(default)]
+        token: String,
+    },
     /// Remove it and everything it owns on this node, its network included.
-    Destroy { id: String, net_index: Option<u32> },
+    Destroy {
+        id: String,
+        net_index: Option<u32>,
+        #[serde(default)]
+        token: String,
+    },
     /// Checkpoint a running sandbox into a named tag, then put it back.
     ///
     /// runsc's checkpoint stops the container, so the parent is restored
@@ -436,6 +459,8 @@ pub enum Command {
     /// is the honest version of that trade.
     Branch {
         id: String,
+        #[serde(default)]
+        token: String,
         tag: String,
         /// Correlates the result with the caller waiting on it, exactly as
         /// for Exec.
@@ -449,6 +474,8 @@ pub enum Command {
     Exec {
         exec_id: String,
         id: String,
+        #[serde(default)]
+        token: String,
         args: Vec<String>,
         timeout_secs: u64,
     },
@@ -463,6 +490,13 @@ pub enum Command {
     /// the new engine and it moves to that engine's pool. Answered like
     /// Branch, before the restart.
     SetBackend { backend: String, result_id: String },
+}
+
+/// The creation token identifies exactly which instance was removed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DestroyedSandbox {
+    pub id: String,
+    pub token: String,
 }
 
 /// Where a node fetches a tag's image from: the node that baked it.
