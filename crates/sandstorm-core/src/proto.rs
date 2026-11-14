@@ -140,6 +140,11 @@ pub struct PollRequest {
     /// does not put it straight back to sleep.
     #[serde(default)]
     pub traffic: Vec<String>,
+    /// Gateway activity bound to the instance that received the request.
+    /// Retries use only this field so an older master cannot apply them
+    /// to a replacement that has the same sandbox ID.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gateway_activity: Vec<GatewayActivity>,
     /// Sandboxes this node put to disk on its own, to make room for a wake.
     ///
     /// The master takes the node's word for these and moves desired state
@@ -262,6 +267,28 @@ pub struct CommandFailure {
     /// on nodes that had room for them minutes later.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held_back: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct GatewayActivity {
+    pub id: String,
+    /// The creation token identifies the instance. Send a digest so this
+    /// report does not carry a credential that can access the sandbox.
+    pub token_hash: String,
+}
+
+impl GatewayActivity {
+    pub fn new(id: &str, token: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            token_hash: Self::hash_token(token),
+        }
+    }
+
+    pub(crate) fn hash_token(token: &str) -> String {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(token.as_bytes()))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

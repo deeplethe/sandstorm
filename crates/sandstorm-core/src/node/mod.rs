@@ -615,6 +615,7 @@ async fn report_wakes(
             }
         };
         let (free_memory_mib, pressure_some_avg10) = runtime::host_pressure();
+        let (traffic, gateway_activity) = wake.take_traffic(false);
         let req = PollRequest {
             node_id: node_id.clone(),
             observed,
@@ -623,7 +624,8 @@ async fn report_wakes(
             hold_ms: None,
             failures: Vec::new(),
             deferred: Vec::new(),
-            traffic: wake.take_traffic(),
+            traffic,
+            gateway_activity,
             evicted: wake.recently_evicted(Instant::now()),
             features: Vec::new(),
             tags: Vec::new(),
@@ -632,17 +634,27 @@ async fn report_wakes(
             templates: None,
             pulls: Vec::new(),
         };
-        let mut rb = client
-            .post(&url)
-            .timeout(Duration::from_secs(10))
-            .json(&req);
-        if let Some(t) = api_token.as_deref().filter(|t| !t.is_empty()) {
-            rb = rb.bearer_auth(t);
-        }
-        if let Err(e) = rb.send().await.and_then(|r| r.error_for_status()) {
-            tracing::debug!(error = %e, "could not report a wake early; it goes with the next poll");
-        }
+        send_wake_report(&client, &url, api_token.as_deref(), req, &wake).await;
     }
+}
+
+async fn send_wake_report(
+    client: &reqwest::Client,
+    url: &str,
+    api_token: Option<&str>,
+    req: PollRequest,
+    wake: &Wakeups,
+) {
+    let mut request = client.post(url).timeout(Duration::from_secs(10)).json(&req);
+    if let Some(token) = api_token.filter(|t| !t.is_empty()) {
+        request = request.bearer_auth(token);
+    }
+    match request.send().await {
+        Ok(response) if response.status().is_success() => return,
+        Ok(response) => tracing::debug!(status = %response.status(), "early wake report refused"),
+        Err(error) => tracing::debug!(%error, "early wake report could not reach the master"),
+    }
+    wake.retry_traffic(req.gateway_activity);
 }
 
 /// Returns the API token the master handed back, if any.
@@ -757,6 +769,7 @@ async fn report(
         })
         .collect();
 
+    let (traffic, gateway_activity) = wake.take_traffic(true);
     Ok(PollRequest {
         node_id: cfg.node_id.clone(),
         observed,
@@ -765,7 +778,8 @@ async fn report(
         hold_ms: hold.map(|h| h.as_millis() as u64),
         failures,
         deferred: Vec::new(),
-        traffic: wake.take_traffic(),
+        traffic,
+        gateway_activity,
         evicted: wake.recently_evicted(Instant::now()),
         features: cfg.features.clone(),
         tags: tags::held(&rt.tags_dir(), tags::REPORT_MIN_AGE),
@@ -1459,6 +1473,7 @@ mod tests {
 #[cfg(test)]
 mod wake_tests {
     use super::*;
+    use crate::proto::GatewayActivity;
     use crate::tier::Tier;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
@@ -1497,6 +1512,122 @@ mod wake_tests {
         }
     }
 
+    async fn report_traffic_after_early_wake(status: reqwest::StatusCode) -> PollRequest {
+        use axum::{routing::post, Json, Router};
+        use tokio::sync::{mpsc, Notify};
+
+        let dir = tempfile::tempdir().unwrap();
+        let (cfg, rt) = node(dir.path());
+        let wake = Arc::new(Wakeups::new(|_, _, _| Ok(())));
+        let mut gw = Gateway::waking(wake.clone());
+        let failing = HashMap::new();
+        let mut early = report(&cfg, &rt, &failing, &mut gw, &wake, None)
+            .await
+            .unwrap();
+        wake.saw("repeat", "repeat-token");
+        wake.saw("old-only", "old-token");
+        wake.saw("recreated", "removed-token");
+        (early.traffic, early.gateway_activity) = wake.take_traffic(false);
+
+        let (send_received, mut received) = mpsc::channel(1);
+        let release = Arc::new(Notify::new());
+        let server_release = release.clone();
+        let app = Router::new().route(
+            "/v1/node/traffic",
+            post(move |Json(req): Json<PollRequest>| {
+                let send_received = send_received.clone();
+                let release = server_release.clone();
+                async move {
+                    send_received.send(req).await.unwrap();
+                    release.notified().await;
+                    status
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/node/traffic", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let record_concurrent_activity = async {
+            let sent = tokio::time::timeout(Duration::from_secs(5), received.recv())
+                .await
+                .expect("early wake report did not arrive")
+                .unwrap();
+            wake.saw("repeat", "repeat-token");
+            wake.saw("new-only", "new-token");
+            wake.saw("recreated", "replacement-token");
+            release.notify_one();
+            sent
+        };
+
+        let (_, sent) = tokio::join!(
+            send_wake_report(&client, &url, None, early, &wake),
+            record_concurrent_activity,
+        );
+        server.abort();
+        assert_eq!(sent.traffic, ["old-only", "recreated", "repeat"]);
+        assert_activity(
+            &sent,
+            &[
+                ("old-only", "old-token"),
+                ("recreated", "removed-token"),
+                ("repeat", "repeat-token"),
+            ],
+        );
+
+        let normal = report(&cfg, &rt, &failing, &mut gw, &wake, Some(Duration::ZERO))
+            .await
+            .unwrap();
+        let next = report(&cfg, &rt, &failing, &mut gw, &wake, Some(Duration::ZERO))
+            .await
+            .unwrap();
+        assert!(next.gateway_activity.is_empty());
+        assert!(next.traffic.is_empty());
+        normal
+    }
+
+    fn assert_activity(report: &PollRequest, expected: &[(&str, &str)]) {
+        let mut expected: Vec<_> = expected
+            .iter()
+            .map(|(id, token)| GatewayActivity::new(id, token))
+            .collect();
+        expected.sort_unstable();
+        let mut actual = report.gateway_activity.clone();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn a_failed_early_wake_report_retries_without_losing_concurrent_activity() {
+        let normal =
+            report_traffic_after_early_wake(reqwest::StatusCode::SERVICE_UNAVAILABLE).await;
+        assert_eq!(normal.traffic, ["new-only", "recreated", "repeat"]);
+        assert_activity(
+            &normal,
+            &[
+                ("new-only", "new-token"),
+                ("old-only", "old-token"),
+                ("recreated", "removed-token"),
+                ("recreated", "replacement-token"),
+                ("repeat", "repeat-token"),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn a_successful_early_wake_report_leaves_only_concurrent_activity() {
+        let normal = report_traffic_after_early_wake(reqwest::StatusCode::NO_CONTENT).await;
+        assert_eq!(normal.traffic, ["new-only", "recreated", "repeat"]);
+        assert_activity(
+            &normal,
+            &[
+                ("new-only", "new-token"),
+                ("recreated", "replacement-token"),
+                ("repeat", "repeat-token"),
+            ],
+        );
+    }
+
     /// A demotion issued before the master heard about a request must not
     /// undo the wake that request caused. It is deferred, not failed: the
     /// failure book stays empty, so nothing shows up as an error and the
@@ -1507,7 +1638,7 @@ mod wake_tests {
         let (cfg, rt) = node(dir.path());
         let w = Arc::new(Wakeups::new(|_, _, _| Ok(())));
         let mut failing = HashMap::new();
-        w.saw("sb");
+        w.saw("sb", "token");
 
         for tier in [Tier::Frozen, Tier::Snapshot, Tier::Detached] {
             match run_one(&cfg, &rt, &mut failing, &w, &set_tier(tier), Instant::now()) {
