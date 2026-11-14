@@ -56,10 +56,10 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body = "1"
 bytes = "1"
+tempfile = "3"
 # The front door hands API requests to the E2B router as a service.
 tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
-tempfile = "3"
 http-body-util = "0.1"
 futures-util = "0.3"
