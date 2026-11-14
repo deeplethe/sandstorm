@@ -1346,36 +1346,49 @@ impl Store {
 
     /// A template to pull from `image`, or another try at one. `spec` holds
     /// what the caller asked for until a node reports what the image says.
+    /// A retry can supply a program while the template is still pending.
     /// Refused, by answering false, for a name that means something else.
     pub fn put_image_template(&self, name: &str, image: &str, spec: &str) -> Result<bool> {
-        let had: Option<Option<String>> = self
-            .conn
+        let tx = self.transaction()?;
+        let had: Option<(Option<String>, String)> = tx
             .query_row(
-                "SELECT image FROM templates WHERE name=?1",
+                "SELECT image, spec FROM templates WHERE name=?1",
                 params![name],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
         match had {
-            Some(i) if i.as_deref() != Some(image) => return Ok(false),
-            Some(_) => {
-                self.conn.execute(
-                    "UPDATE templates SET attempt=attempt+1 WHERE name=?1",
-                    params![name],
+            Some((i, _)) if i.as_deref() != Some(image) => return Ok(false),
+            Some((_, mut saved_spec)) => {
+                let mut saved: serde_json::Value = serde_json::from_str(&saved_spec)?;
+                if saved["pending"].as_bool() == Some(true) {
+                    let mut retry: serde_json::Value = serde_json::from_str(spec)?;
+                    if retry["args"]
+                        .as_array()
+                        .is_some_and(|args| !args.is_empty())
+                    {
+                        saved["args"] = retry["args"].take();
+                        saved_spec = saved.to_string();
+                    }
+                }
+                tx.execute(
+                    "UPDATE templates SET attempt=attempt+1, spec=?2 WHERE name=?1",
+                    params![name, saved_spec],
                 )?;
-                self.conn.execute(
+                tx.execute(
                     "DELETE FROM template_pulls WHERE template=?1",
                     params![name],
                 )?;
             }
             None => {
-                self.conn.execute(
+                tx.execute(
                     "INSERT INTO templates (name, rootfs, spec, created_at, image, attempt)
                      VALUES (?1,'rootfs',?2,?3,?4,1)",
                     params![name, spec, now_secs(), image],
                 )?;
             }
         }
+        tx.commit()?;
         Ok(true)
     }
 

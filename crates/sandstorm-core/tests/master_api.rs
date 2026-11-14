@@ -3659,6 +3659,21 @@ async fn a_template_comes_from_an_image() {
     assert_eq!(view[0]["ready"], true);
     assert_eq!(view[0]["nodes"][0]["state"], "ready");
 
+    let retry = from_image(
+        &h,
+        serde_json::json!({
+            "name": "py",
+            "image": "python:3.12",
+            "args": ["/bin/false"],
+            "env": ["TEST_RETRY=changed"],
+            "memory_max_mib": 512,
+            "port": 9000,
+        }),
+    )
+    .await;
+    assert_eq!(retry.status(), 202);
+    assert_eq!(pulls(&h).await[0]["ready"], true);
+
     let made: serde_json::Value = c
         .post(format!("{}/v1/sandboxes", h.base))
         .json(&serde_json::json!({ "template": "py" }))
@@ -3675,6 +3690,7 @@ async fn a_template_comes_from_an_image() {
             assert_eq!(spec["args"][0], "python3");
             assert_eq!(spec["cwd"], "/app");
             assert_eq!(spec["memory_max_mib"], 256);
+            assert_eq!(spec["env"], serde_json::json!(["PATH=/usr/local/bin"]));
             assert!(spec["ro_binds"].as_array().unwrap().is_empty());
             assert!(spec.get("pending").is_none());
         }
@@ -3731,15 +3747,71 @@ async fn a_node_that_joins_later_pulls_the_template() {
 }
 
 #[tokio::test]
-async fn an_image_with_no_program_needs_args() {
+async fn an_image_with_no_program_can_be_retried_with_args() {
     let h = start().await;
     register(&h, "bm-1", "default").await;
-    from_image(&h, serde_json::json!({ "name": "s", "image": "scratch:1" })).await;
-    let done = TemplatePull::done("s", "scratch:1", 1, ImageConfig::default());
-    poll_pulls(&h, "bm-1", &["s"], vec![done]).await;
+    let original = from_image(
+        &h,
+        serde_json::json!({
+            "name": "s",
+            "image": "scratch:1",
+            "memory_max_mib": 256,
+            "port": 8081,
+            "env": ["TEST_RETRY=original"],
+        }),
+    )
+    .await;
+    assert_eq!(original.status(), 202);
+    let config = ImageConfig {
+        env: vec!["IMAGE_DEFAULT=1".into()],
+        port: Some(8000),
+        ..Default::default()
+    };
+    let done = TemplatePull::done("s", "scratch:1", 1, config.clone());
+    poll_pulls(&h, "bm-1", &["s"], vec![done.clone()]).await;
     let view = pulls(&h).await;
     assert_eq!(view[0]["ready"], false);
     assert_eq!(view[0]["nodes"][0]["state"], "failed");
+    assert_eq!(
+        view[0]["nodes"][0]["error"],
+        "the image names no program; give args"
+    );
+
+    let retry = from_image(
+        &h,
+        serde_json::json!({ "name": "s", "image": "scratch:1", "args": ["/app/server"] }),
+    )
+    .await;
+    assert_eq!(retry.status(), 202);
+    match poll_pulls(&h, "bm-1", &["s"], vec![done]).await.as_slice() {
+        [Command::PullTemplate { attempt: 2, .. }] => {}
+        other => panic!("expected a second attempt, got {other:?}"),
+    }
+    let done = TemplatePull::done("s", "scratch:1", 2, config);
+    assert!(poll_pulls(&h, "bm-1", &["s"], vec![done]).await.is_empty());
+    let view = pulls(&h).await;
+    assert_eq!(view[0]["ready"], true);
+    assert_eq!(view[0]["nodes"][0]["state"], "ready");
+
+    let made = reqwest::Client::new()
+        .post(format!("{}/v1/sandboxes", h.base))
+        .json(&serde_json::json!({ "template": "s" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(made.status(), 201);
+    match poll_pulls(&h, "bm-1", &["s"], vec![]).await.as_slice() {
+        [Command::Create { spec, port, .. }] => {
+            assert_eq!(*port, 8081);
+            assert_eq!(spec["args"], serde_json::json!(["/app/server"]));
+            assert_eq!(spec["memory_max_mib"], 256);
+            assert_eq!(
+                spec["env"],
+                serde_json::json!(["IMAGE_DEFAULT=1", "TEST_RETRY=original"])
+            );
+        }
+        other => panic!("expected a create, got {other:?}"),
+    }
 }
 
 #[tokio::test]
