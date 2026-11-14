@@ -37,6 +37,8 @@ jobs:
         run: npm test
       - name: test the installer's backend choice
         run: sh packaging/tests/install_backend.sh
+      - name: test fleet script HTTP errors
+        run: python3 scripts/tests/test_fleet_http.py
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
