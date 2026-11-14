@@ -227,7 +227,10 @@ need no Docker, and a node that joins later pulls it too.
 Answers `202` at once. A sandbox can start as soon as one node has it, on the
 nodes that do, and until then `POST /v1/sandboxes` answers `409`. Sent again with
 the same image it tries again, on the nodes that failed and any that have not
-finished. A name that is already something else is refused with `409`.
+finished. While the template is still pending, a retry with nonempty `args`
+replaces its startup command and keeps the original environment, memory, and
+port settings. Once the template is ready, a retry uses the existing
+configuration. A name that is already something else is refused with `409`.
 
 - Public images only: a registry that wants a login is reported as failed.
 - Plain HTTP only to `localhost` and `127.0.0.1`.
