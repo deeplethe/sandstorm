@@ -6,7 +6,7 @@
 // it changed; each table's own filters and pages stay in its component.
 import { useSyncExternalStore } from "react";
 import type { ConsoleNow, SeriesView } from "./types";
-import { api, auth, setToken } from "./api";
+import { api, ApiError, auth, setToken } from "./api";
 import { local, view } from "./storage";
 import { validPool } from "./groups";
 import { loading } from "./loading";
@@ -59,12 +59,14 @@ export function showGate(msg?: string): void {
 }
 auth.refused = () => showGate("That token was refused.");
 export function signIn(token: string): void {
+  refreshGeneration++;
   setToken(token);
   st.gate = { ...st.gate, open: false };
   emit();
   void refresh(true);
 }
 export function signOut(): void {
+  refreshGeneration++;
   setToken(null);
   showGate();
 }
@@ -75,6 +77,7 @@ export function setTab(h: string): void {
   emit();
 }
 export function setRange(s: number): void {
+  if (s !== view.range) refreshGeneration++;
   view.range = s;
   local.set("sandstorm-console-range", String(s));
   emit();
@@ -108,34 +111,52 @@ export function setLive(err?: unknown): void {
 // The loading screen: at once on the first load, and only if a new range
 // is slow to come (a quick one would just flash). It closes on an answer
 // from the refresh that opened it or a later one, never an older one.
-let seq = 0, openedBy = 0, firstDraw = true;
+let refreshGeneration = 0, seq = 0, settled = 0, openedBy = 0, firstDraw = true;
 const RANGE_NAME: Record<number, string> = { 900: "15m", 3600: "1h", 21600: "6h", 86400: "24h" };
 export async function refresh(first = false): Promise<void> {
   if (!auth.token) { showGate(); return; }
   let slow = 0;
-  const r0 = view.range, id = ++seq;
-  const open = (msg?: string) => { openedBy = id; loading(true, msg); };
-  if (first) { if (!st.lastOk) open(); else slow = window.setTimeout(() => open("Loading the last " + (RANGE_NAME[view.range] || "")), 220); }
+  const range = view.range, generation = refreshGeneration, id = ++seq;
+  // A newer pending poll can take longer than the poll interval. Accept
+  // results in completion order until a newer request has already settled.
+  const isCurrent = () => generation === refreshGeneration && id > settled;
+  const open = (msg?: string) => {
+    if (isCurrent() && id >= openedBy) { openedBy = id; loading(true, msg); }
+  };
+  const close = () => {
+    if (id >= openedBy) { openedBy = 0; loading(false); }
+  };
+  if (first) {
+    if (!st.lastOk) open();
+    else slow = window.setTimeout(() => open("Loading the last " + (RANGE_NAME[range] || "")), 220);
+  }
   try {
-    const step = view.range <= 900 ? 5 : undefined;
+    const options = { showGateOnUnauthorized: false };
     const [now, series] = await Promise.all([
-      api<ConsoleNow>("/v1/console/now"),
-      api<SeriesView>(`/v1/console/series?since=${view.range}` + (step ? `&step=${step}` : "")),
+      api<ConsoleNow>("/v1/console/now", undefined, options),
+      api<SeriesView>(`/v1/console/series?since=${range}` + (range <= 900 ? "&step=5" : ""), undefined, options),
     ]);
-    // An answer for a range the user has since left would undo the new one.
-    if (r0 !== view.range) { clearTimeout(slow); return; }
+    if (!isCurrent()) return;
+    const v = validPool(now.nodes, st.pool);
+    settled = id;
     st.NOW = now; st.S = series; st.lastOk = Date.now();
     // A group that is gone is forgotten rather than kept, showing nothing.
-    const v = validPool(now.nodes, st.pool);
     if (v !== st.pool) { st.pool = v; local.remove("sandstorm-console-pool"); }
     st.refreshed++;
     redrawAll(first || firstDraw); firstDraw = false;
     setLive(null);
-    clearTimeout(slow);
-    if (id >= openedBy) { openedBy = 0; loading(false); }
+    close();
   } catch (e) {
+    if (!isCurrent()) return;
+    settled = id;
+    if (e instanceof ApiError && e.status === 401) auth.refused();
+    else { console.warn(e); setLive(e); }
+    if (st.lastOk) close();
+    else if (id >= openedBy) {
+      openedBy = id;
+      loading(true, "Cannot reach the master. Trying again every 5 seconds.", true);
+    }
+  } finally {
     clearTimeout(slow);
-    if (String((e as Error).message) !== "401") { console.warn(e); setLive(e); }
-    if (!st.lastOk) { openedBy = 0; loading(true, "Cannot reach the master. Trying again every 5 seconds.", true); }
   }
 }

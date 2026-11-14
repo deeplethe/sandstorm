@@ -26,11 +26,14 @@ export class ApiError extends Error {
 const bearer = (): Record<string, string> => (auth.token ? { authorization: "Bearer " + auth.token } : {});
 
 // A GET, or with a body a POST of it as JSON.
-export async function api<T>(path: string, body?: unknown): Promise<T> {
+export async function api<T>(path: string, body?: unknown, { showGateOnUnauthorized = true } = {}): Promise<T> {
   const headers = bearer();
   const opts: RequestInit = body === undefined ? { headers } : { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body) };
   const r = await fetch(path, opts);
-  if (r.status === 401) { auth.refused(); throw new Error("401"); }
+  if (r.status === 401) {
+    if (showGateOnUnauthorized) auth.refused();
+    throw new ApiError("401", 401);
+  }
   if (!r.ok) {
     // The API answers {"error": "..."}; say that, not the JSON around it.
     const text = await r.text();
