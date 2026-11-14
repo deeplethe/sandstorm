@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Controller, SANDBOX_TOKEN_HEADER } from "../src/controller.js";
 import { Sandbox } from "../src/sandbox.js";
 import type { SandboxInfo } from "../src/types.js";
@@ -167,5 +167,140 @@ describe("Sandbox.create", () => {
       Sandbox.create({ ...options, template: "python", startTimeoutMs: 10 }),
     ).rejects.toThrow(/did not start within 10 ms/);
     expect(calls.at(-1)).toMatchObject({ method: "DELETE" });
+  });
+});
+
+describe("sandbox readiness deadline", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function master(
+    read: (signal: AbortSignal) => Promise<Response>,
+    cleanup: () => Promise<Response> = async () => new Response(null, { status: 204 }),
+  ) {
+    const methods: string[] = [];
+    const deleted: string[] = [];
+    const fetchMock: typeof fetch = async (input, init) => {
+      methods.push(init!.method!);
+      if (init!.method === "POST") return Response.json(info("a", "token-a"), { status: 201 });
+      if (init!.method === "DELETE") {
+        deleted.push(new URL(String(input)).pathname);
+        return cleanup();
+      }
+      return read(init!.signal!);
+    };
+    return { methods, deleted, options: { baseUrl: "http://test", fetch: fetchMock } };
+  }
+
+  function waitForAbort(signal: AbortSignal): Promise<Response> {
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
+
+  it("rejects a ready response received after the deadline", async () => {
+    const { methods, options } = master(async () => {
+      // This fetch returns a late response even after its signal was aborted.
+      await new Promise((resolve) => setTimeout(resolve, 101));
+      return Response.json({ ...info("a"), ip: "10.86.0.2" });
+    });
+    const sandbox = new Sandbox(new Controller(options), info("a"));
+    const result = sandbox.waitUntilRunning(100).catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(101);
+    expect(await result).toMatchObject({ message: /did not start within 100 ms/ });
+    expect(sandbox.info.ip).toBeUndefined();
+    expect(methods).toEqual(["GET"]);
+  });
+
+  it.each([
+    {
+      response: () => Response.json({ error: "missing sandbox" }, { status: 404 }),
+      error: { name: "ControllerError", status: 404 },
+    },
+    {
+      response: () => new Response("not JSON"),
+      error: { name: "SyntaxError" },
+    },
+  ])("preserves a late status failure with $error.name", async ({ response, error }) => {
+    const { methods, options } = master(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 101));
+      return response();
+    });
+    const sandbox = new Sandbox(new Controller(options), info("a"));
+    const result = sandbox.waitUntilRunning(100).catch((failure: unknown) => failure);
+
+    await vi.advanceTimersByTimeAsync(101);
+    expect(await result).toMatchObject(error);
+    expect(methods).toEqual(["GET"]);
+  });
+
+  it("bounds a later request by the remaining readiness budget", async () => {
+    const reads: number[] = [];
+    const { methods, options } = master(async (signal) => {
+      reads.push(performance.now());
+      if (reads.length === 1) return Response.json({ ...info("a"), last_error: "still starting" });
+      return waitForAbort(signal);
+    });
+    const sandbox = new Sandbox(new Controller({ ...options, timeoutMs: 1000 }), info("a"));
+    const onTimeout = vi.fn();
+    const result = sandbox.waitUntilRunning(120).catch(onTimeout);
+
+    await vi.advanceTimersByTimeAsync(120);
+    expect(reads).toEqual([0, 50]);
+    expect(methods).toEqual(["GET", "GET"]);
+    expect(onTimeout).toHaveBeenCalledWith(new Error("sandbox a did not start within 120 ms; last error: still starting"));
+    await result;
+  });
+
+  it("uses a smaller request timeout and keeps its original error", async () => {
+    const { methods, options } = master(waitForAbort);
+    const sandbox = new Sandbox(new Controller({ ...options, timeoutMs: 25 }), info("a"));
+    const result = sandbox.waitUntilRunning(100).catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(25);
+    expect(await result).toMatchObject({ name: "AbortError" });
+    expect(methods).toEqual(["GET"]);
+  });
+
+  it("uses the remaining budget for backoff without starting another request at the deadline", async () => {
+    const { methods, options } = master(async () => Response.json(info("a")));
+    const sandbox = new Sandbox(new Controller(options), info("a"));
+    const onTimeout = vi.fn();
+    const result = sandbox.waitUntilRunning(35).catch(onTimeout);
+
+    await vi.advanceTimersByTimeAsync(34);
+    expect(onTimeout).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await result;
+    expect(onTimeout).toHaveBeenCalledWith(new Error("sandbox a did not start within 35 ms; last error: no reason recorded"));
+    expect(methods).toEqual(["GET"]);
+  });
+
+  it("deletes the sandbox owned by create and preserves the readiness error if cleanup fails", async () => {
+    const { methods, deleted, options } = master(waitForAbort, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return Response.json({ error: "cleanup failed" }, { status: 500 });
+    });
+    const onTimeout = vi.fn();
+    const result = Sandbox.create({
+      ...options,
+      template: "python",
+      startTimeoutMs: 100,
+      timeoutMs: 1000,
+    }).catch(onTimeout);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(methods).toEqual(["POST", "GET", "DELETE"]);
+    expect(deleted).toEqual(["/v1/sandboxes/a"]);
+    expect(onTimeout).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20);
+    await result;
+    expect(onTimeout).toHaveBeenCalledWith(new Error("sandbox a did not start within 100 ms; last error: no reason recorded"));
   });
 });

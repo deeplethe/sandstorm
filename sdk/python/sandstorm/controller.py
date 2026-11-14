@@ -181,9 +181,13 @@ class Controller:
         """``GET /v1/sandboxes`` — every live sandbox the daemon tracks."""
         return self._request("GET", "/v1/sandboxes")
 
-    def get_sandbox(self, sandbox_id: str) -> dict:
-        """``GET /v1/sandboxes/:id`` — one sandbox's metadata."""
-        return self._request("GET", f"/v1/sandboxes/{sandbox_id}")
+    def get_sandbox(self, sandbox_id: str, *, timeout: Optional[float] = None) -> dict:
+        """``GET /v1/sandboxes/:id`` — one sandbox's metadata.
+
+        ``timeout``, in seconds, overrides the controller's HTTP timeout for
+        this request.
+        """
+        return self._request("GET", f"/v1/sandboxes/{sandbox_id}", timeout=timeout)
 
     def kill_sandbox(self, sandbox_id: str) -> None:
         """``DELETE /v1/sandboxes/:id`` — terminate one sandbox."""
@@ -296,7 +300,8 @@ class Controller:
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(
-                req, timeout=timeout or self.timeout, context=self._ssl_context
+                req, timeout=self.timeout if timeout is None else timeout,
+                context=self._ssl_context,
             ) as resp:
                 raw = resp.read()
                 if not raw:

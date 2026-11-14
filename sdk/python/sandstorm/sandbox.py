@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence, Union
+from urllib.error import URLError
 
 from .controller import Controller, ControllerError
 
@@ -229,21 +231,41 @@ class Sandbox:
         """
         deadline = time.monotonic() + start_timeout
         pause = 0.05
+        reason = "no reason recorded"
+        timeout_error = None
         while True:
-            seen = self.controller.get_sandbox(self.id)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                seen = self.controller.get_sandbox(
+                    self.id, timeout=min(self.controller.timeout, remaining)
+                )
+            except (TimeoutError, socket.timeout, URLError) as error:
+                cause = error.reason if isinstance(error, URLError) else error
+                if not isinstance(cause, (TimeoutError, socket.timeout)):
+                    raise
+                if time.monotonic() < deadline:
+                    raise
+                timeout_error = error
+                break
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             if seen.get("ip"):
                 self.info = {**self.info, **seen}
                 return
             reason = seen.get("last_error") or "no reason recorded"
             if seen.get("error_attempts", 0) >= _MAX_START_FAILURES:
                 raise RuntimeError(f"sandbox {self.id} failed to start: {reason}")
-            if time.monotonic() + pause > deadline:
-                raise RuntimeError(
-                    f"sandbox {self.id} did not start within {start_timeout}s; "
-                    f"last error: {reason}"
-                )
-            time.sleep(pause)
+            time.sleep(min(pause, remaining))
             pause = min(pause * 2, 1.0)
+
+        raise RuntimeError(
+            f"sandbox {self.id} did not start within {start_timeout}s; "
+            f"last error: {reason}"
+        ) from timeout_error
 
     def _discard(self) -> None:
         """Remove a sandbox that never came up, keeping the original error."""
