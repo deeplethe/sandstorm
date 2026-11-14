@@ -1,5 +1,7 @@
 """The tools against a stand-in for a master, as docs/API.md describes it."""
 import json
+import subprocess
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -157,3 +159,106 @@ def test_waits_as_long_as_the_master_may_take(master, monkeypatch, call, read_ti
 def test_eval_sends_its_time_limit(master):
     server.eval_code('sb-0', 'print(2+2)', timeout_secs=90)
     assert master.bodies('POST') == [{'code': 'print(2+2)', 'timeout_secs': 90}]
+
+
+@pytest.fixture
+def wait_on_log(monkeypatch, tmp_path):
+    class LogMaster(Master):
+        def handle(self, request):
+            assert request.method == 'POST'
+            assert request.url.path == '/v1/sandboxes/sb-0/exec'
+            assert request.headers['x-sandstorm-sandbox-token'] == 'log-test-token'
+            self.requests.append(request)
+            args = json.loads(request.content)['args']
+            assert args[:2] == ['sh', '-c']
+            assert args[3:] == ['wait_for_text', str(log), marker]
+            assert str(log) not in args[2]
+            result = subprocess.run(
+                args, cwd=tmp_path, capture_output=True, text=True, timeout=5
+            )
+            return httpx.Response(200, json={
+                'stdout': result.stdout,
+                'stderr': result.stderr,
+                'exit_code': result.returncode,
+            })
+
+    master = use(monkeypatch, LogMaster())
+    log = marker = None
+
+    def wait(path, text, *, after_first_poll=None, timeout_secs=0.25):
+        nonlocal log, marker
+        log = tmp_path / path
+        marker = text
+        elapsed = 0.0
+
+        def sleep(seconds):
+            nonlocal elapsed
+            if elapsed == 0 and after_first_poll is not None:
+                after_first_poll(log)
+            elapsed += seconds
+
+        monkeypatch.setattr(server, 'time', SimpleNamespace(
+            monotonic=lambda: elapsed, sleep=sleep
+        ))
+        return server.wait_for_text(
+            'sb-0', str(log), marker, timeout_secs=timeout_secs,
+            poll_interval_ms=250, sandbox_token='log-test-token',
+        )
+
+    return wait, master
+
+
+def test_wait_for_text_finds_a_marker_before_the_log_excerpt(tmp_path, wait_on_log):
+    wait, _ = wait_on_log
+    marker = 'READY_TO_BRANCH'
+    body = marker + '\n' + 'noise\n' * 2000 + 'still working\n'
+    (tmp_path / 'progress.log').write_text(body)
+
+    result = wait('progress.log', marker)
+
+    assert result['found'] is True
+    assert result['last_excerpt'] == body[-256:]
+    assert marker not in result['last_excerpt']
+
+
+def test_wait_for_text_accepts_a_path_with_spaces_and_a_literal_marker(tmp_path, wait_on_log):
+    wait, _ = wait_on_log
+    log = tmp_path / 'task progress.log'
+    log.write_text('phase READY1 completed\n')
+    assert wait(log.name, 'READY[1]')['found'] is False
+
+    log.write_text('phase READY[1] completed\n')
+    assert wait(log.name, 'READY[1]')['found'] is True
+
+
+@pytest.mark.parametrize(('body', 'marker', 'found'), [
+    ('before\nALPHA\nBETA', 'ALPHA\nBETA', True),
+    ('before\nALPHA\nother\nBETA', 'ALPHA\nBETA', False),
+    ('before\nALPHA\nBETA', 'ALPHA\nBETA\n', False),
+    ('before\nALPHA\nBETA\n', 'ALPHA\nBETA\n', True),
+])
+def test_wait_for_text_matches_multiline_markers_literally(
+    tmp_path, wait_on_log, body, marker, found
+):
+    wait, _ = wait_on_log
+    (tmp_path / 'multiline.log').write_text(body)
+
+    result = wait('multiline.log', marker)
+
+    assert result['found'] is found
+    assert result['last_excerpt'] == body
+
+
+def test_wait_for_text_keeps_polling_until_the_log_is_created(wait_on_log):
+    wait, master = wait_on_log
+    result = wait('pending.log', 'READY')
+    assert result == {'found': False, 'elapsed_ms': 250, 'last_excerpt': ''}
+
+    master.requests.clear()
+    result = wait(
+        'pending.log', 'READY', timeout_secs=0.5,
+        after_first_poll=lambda path: path.write_text('READY\n'),
+    )
+    assert result['found'] is True
+    assert result['last_excerpt'] == 'READY\n'
+    assert master.calls() == ['POST /v1/sandboxes/sb-0/exec'] * 2
