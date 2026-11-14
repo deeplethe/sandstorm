@@ -33,6 +33,7 @@ import json
 import os
 import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
@@ -129,7 +130,8 @@ class Controller:
 
     def delete_snapshot(self, tag: str) -> None:
         """``DELETE /v1/snapshots/:tag`` — drop both registry and disk files."""
-        self._request("DELETE", f"/v1/snapshots/{tag}")
+        encoded_tag = urllib.parse.quote(tag, safe="")
+        self._request("DELETE", f"/v1/snapshots/{encoded_tag}")
 
     # --- sandboxes ------------------------------------------------
 
