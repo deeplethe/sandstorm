@@ -245,10 +245,14 @@ export class Controller {
     return this.request<SandboxInfo[]>("GET", "/v1/sandboxes");
   }
 
-  async getSandbox(sandboxId: string): Promise<SandboxInfo> {
+  /** Read a sandbox, optionally shortening the controller's request timeout. */
+  async getSandbox(sandboxId: string, timeoutMs = this.timeoutMs): Promise<SandboxInfo> {
     return this.request<SandboxInfo>(
       "GET",
       `/v1/sandboxes/${encodeURIComponent(sandboxId)}`,
+      undefined,
+      undefined,
+      Math.min(this.timeoutMs, timeoutMs),
     );
   }
 

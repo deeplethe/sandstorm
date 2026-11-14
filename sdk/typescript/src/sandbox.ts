@@ -97,28 +97,44 @@ export class Sandbox {
    * sandbox with processes, so that is the signal. `ping` is not: its `ok`
    * also needs something listening inside.
    *
-   * A program that fails to load never gets that far: the master quarantines
+   * The readiness budget covers status requests and time between polls. A
+   * program that fails to load never gets that far: the master quarantines
    * it, which throws here.
    */
   async waitUntilRunning(startTimeoutMs = 60_000): Promise<void> {
-    const deadline = Date.now() + startTimeoutMs;
+    const deadline = performance.now() + startTimeoutMs;
     let pauseMs = 50;
+    let reason = "no reason recorded";
+    const timedOut = () => new Error(
+      `sandbox ${this.id} did not start within ${startTimeoutMs} ms; last error: ${reason}`,
+    );
+
     for (;;) {
-      const seen = await this.controller.getSandbox(this.id);
+      const remainingMs = deadline - performance.now();
+      if (!(remainingMs > 0)) throw timedOut();
+
+      let seen: SandboxInfo;
+      try {
+        // Timer delays are whole milliseconds. Keep a budget-limited abort
+        // from firing just before the deadline due to rounding down.
+        seen = await this.controller.getSandbox(this.id, Math.ceil(remainingMs));
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError" && performance.now() >= deadline) {
+          throw timedOut();
+        }
+        throw e;
+      }
+      reason = seen.last_error ?? "no reason recorded";
+      const afterReadMs = deadline - performance.now();
+      if (afterReadMs <= 0) throw timedOut();
       if (seen.ip) {
         this.info = { ...this.info, ...seen };
         return;
       }
-      const reason = seen.last_error ?? "no reason recorded";
       if ((seen.error_attempts ?? 0) >= MAX_START_FAILURES) {
         throw new Error(`sandbox ${this.id} failed to start: ${reason}`);
       }
-      if (Date.now() + pauseMs > deadline) {
-        throw new Error(
-          `sandbox ${this.id} did not start within ${startTimeoutMs} ms; last error: ${reason}`,
-        );
-      }
-      await new Promise((done) => setTimeout(done, pauseMs));
+      await new Promise((done) => setTimeout(done, Math.min(pauseMs, Math.ceil(afterReadMs))));
       pauseMs = Math.min(pauseMs * 2, 1000);
     }
   }
