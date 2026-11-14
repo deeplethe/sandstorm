@@ -236,6 +236,59 @@ def branch_sandbox(sandbox_id: str, tag: str) -> dict[str, Any]:
         return r.json()
 
 
+# Return the match as the command's exit status and keep stdout for the
+# excerpt. grep treats a multiline pattern as separate alternatives, so
+# use a rolling window of whole lines for that case or when grep is absent.
+_POLL_LOG = """\
+path=$1
+marker=$2
+[ -f "$path" ] && [ -r "$path" ] || exit 1
+newline='
+'
+contains_marker() {
+    case "$marker" in
+        '') return 0 ;;
+        *"$newline"*) ;;
+        *)
+            if command -v grep >/dev/null 2>&1; then
+                LC_ALL=C grep -Fq -e "$marker"
+                return
+            fi
+            ;;
+    esac
+
+    lines=1
+    rest=$marker
+    while [ "${rest#*"$newline"}" != "$rest" ]; do
+        rest=${rest#*"$newline"}
+        lines=$((lines + 1))
+    done
+    window=
+    count=0
+    while :; do
+        if IFS= read -r line; then
+            line=$line$newline
+        elif [ -z "$line" ]; then
+            break
+        fi
+        window=$window$line
+        case "$window" in *"$marker"*) return 0 ;; esac
+        count=$((count + 1))
+        if [ "$count" -eq "$lines" ]; then
+            window=${window#*"$newline"}
+            count=$((count - 1))
+        fi
+    done
+    return 1
+}
+
+found=1
+contains_marker 2>/dev/null < "$path" && found=0
+tail -c 256 2>/dev/null < "$path"
+exit "$found"
+"""
+
+
 @mcp.tool()
 def wait_for_text(
     sandbox_id: str,
@@ -255,32 +308,34 @@ def wait_for_text(
     Args:
         sandbox_id: Target sandbox.
         path: Absolute path inside the guest of the file to poll.
-        marker: Substring to wait for. Returned as-is when found.
+        marker: Literal substring to find anywhere in the file.
         timeout_secs: Max wall-clock seconds to wait. Default 60.
         poll_interval_ms: How often to re-check. Default 200 ms.
         sandbox_token: Token from the creation response; required by v0.6.
 
     Returns: {"found": bool, "elapsed_ms": int, "last_excerpt": str}.
-    When found is false, last_excerpt contains the last ~256 bytes
-    of the file so you can see what's actually being written.
+    last_excerpt contains up to the last 256 bytes of the file for context.
+    A file that has not been created yet is treated as a miss.
     """
+    if "\0" in marker:
+        raise ValueError("marker must not contain a NUL byte")
     deadline = time.monotonic() + timeout_secs
     last_excerpt = ""
     started = time.monotonic()
     while time.monotonic() < deadline:
-        # Use exec_command for one-shot read; the master's exec returns
-        # stdout+exit, and a short tail of the target file is cheap.
+        # Search in the guest and transfer only the short diagnostic tail.
         with _client(sandbox_token) as c:
             r = c.post(
                 f"/v1/sandboxes/{sandbox_id}/exec",
                 json={
-                    "args": ["sh", "-c", f"tail -c 4096 {path} 2>/dev/null || true"],
+                    "args": ["sh", "-c", _POLL_LOG, "wait_for_text", path, marker],
                     "timeout_secs": 5,
                 },
             )
             r.raise_for_status()
-            last_excerpt = r.json().get("stdout", "") or ""
-            if marker in last_excerpt:
+            result = r.json()
+            last_excerpt = result.get("stdout", "") or ""
+            if result.get("exit_code") == 0:
                 return {
                     "found": True,
                     "elapsed_ms": int((time.monotonic() - started) * 1000),
