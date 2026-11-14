@@ -3,13 +3,12 @@
 // fleet is far more than one page.
 import { useEffect, useRef, useState } from "react";
 import type { ConsoleEvent } from "../types";
-import { apiPage, auth } from "../api";
 import { ago, errorText } from "../format";
 import { st } from "../state";
 import { keepPageSize, pageSize } from "../storage";
 import { Dropdown } from "../components/Dropdown";
 import { Pager } from "../components/Pager";
-import { useDebounced, useTabLoad } from "../components/hooks";
+import { usePagedList } from "../components/usePagedList";
 
 // Line icons in the same hand as the header's, coloured by what happened.
 const ico = (d: string) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -31,45 +30,40 @@ const key = (e: ConsoleEvent) => e.ts + e.kind + e.subject + e.detail;
 export function Activity() {
   const [kind, setKind] = useState("");
   const [qIn, setQIn] = useState("");
-  const q = useDebounced(qIn.trim(), 250);
+  const [q, setQ] = useState("");
   const [since, setSince] = useState(86400);
   const [offset, setOffset] = useState(0);
   const [size, setSize] = useState(() => pageSize("activity", 20));
   const [page, setPage] = useState<{ total: number; rows: { e: ConsoleEvent; fresh: boolean }[] } | null>(null);
   const [error, setError] = useState("");
-  const busy = useRef(false), seen = useRef<Set<string> | null>(null);
-  const want = useRef({ kind, q, since, offset, size });
-  want.current = { kind, q, since, offset, size };
-
-  const load = async (): Promise<void> => {
-    if (!auth.token || busy.current) return;
-    busy.current = true;
-    try {
-      const w = want.current;
-      const qs = new URLSearchParams({ since: String(w.since), limit: String(w.size), offset: String(w.offset) });
-      if (w.kind) qs.set("kind", w.kind);
-      if (w.q) qs.set("q", w.q);
-      const { total, rows } = await apiPage<ConsoleEvent>("/v1/console/events?" + qs);
-      if (w.offset >= total && total > 0) { busy.current = false; setOffset(Math.floor((total - 1) / w.size) * w.size); return; }
+  const seen = useRef<{ filter: string; keys: Set<string> } | null>(null);
+  const qs = new URLSearchParams({ since: String(since) });
+  if (kind) qs.set("kind", kind);
+  if (q) qs.set("q", q);
+  const filter = qs.toString();
+  qs.set("limit", String(size));
+  qs.set("offset", String(offset));
+  usePagedList<ConsoleEvent>(
+    "activity", "/v1/console/events?" + qs, offset === 0,
+    ({ total, rows }) => {
+      if (offset > 0 && offset >= total) {
+        setOffset(Math.floor(Math.max(0, total - 1) / size) * size);
+        return;
+      }
       // Only rows that arrive while the first page is open are new.
-      const s = seen.current, first = w.offset === 0;
+      const s = seen.current?.filter === filter ? seen.current.keys : null, first = offset === 0;
       setPage({ total, rows: rows.map((e) => ({ e, fresh: first && !!s && !s.has(key(e)) })) });
-      if (first) seen.current = new Set(rows.map(key));
+      if (first) seen.current = { filter, keys: new Set(rows.map(key)) };
       setError("");
-    } catch (e) {
-      if (String((e as Error).message) === "401") return;
-      setError(errorText(e));
-    } finally { busy.current = false; }
-  };
-  // Shown, and kept up while its first page is open.
-  useTabLoad("activity", (why) => { if (why === "show" || want.current.offset === 0) void load(); });
-  const first = useRef(true);
+    },
+    (error) => setError(errorText(error)),
+  );
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    void load();
-    // loads on what is asked for
-  }, [kind, q, since, offset, size]);
-  useEffect(() => setOffset(0), [q]);
+    const search = qIn.trim();
+    if (search === q) return;
+    const timer = setTimeout(() => { setQ(search); setOffset(0); }, 250);
+    return () => clearTimeout(timer);
+  }, [qIn, q]);
 
   const nowS = Date.now() / 1000;
   return (
