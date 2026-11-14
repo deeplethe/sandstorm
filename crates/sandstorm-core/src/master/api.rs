@@ -19,8 +19,8 @@ use crate::auth::{require_token, AuthConfig};
 use crate::identity::{random_token, Ca};
 use crate::node::BackendKind;
 use crate::proto::{
-    Command, CommandResult, Egress, FetchFrom, PollRequest, PollResponse, RegisterRequest,
-    RegisterResponse,
+    Command, CommandResult, Egress, FetchFrom, GatewayActivity, PollRequest, PollResponse,
+    RegisterRequest, RegisterResponse,
 };
 use crate::state::{now_secs, Node, Sandbox, SnapshotTag, Store};
 use crate::tier::{IdlePolicy, Tier};
@@ -2459,12 +2459,21 @@ pub(super) fn record_failures(st: &St, req: &PollRequest) -> Result<(), ApiErr> 
 /// that request's late report. Late traffic still moves the idle clock;
 /// it just does not overrule a demotion that came after it.
 pub(super) fn apply_traffic(st: &St, req: &PollRequest) -> Result<(), ApiErr> {
-    if req.traffic.is_empty() {
+    if req.traffic.is_empty() && req.gateway_activity.is_empty() {
         return Ok(());
+    }
+    let mut by_id: HashMap<&str, Vec<&str>> = HashMap::new();
+    for event in &req.gateway_activity {
+        by_id.entry(&event.id).or_default().push(&event.token_hash);
+    }
+    // A scoped report is authoritative for its ID even if none of its
+    // events match. Use the legacy IDs only for unscoped entries.
+    for id in &req.traffic {
+        by_id.entry(id).or_default();
     }
     let store = st.store();
     let ise = |e: anyhow::Error| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
-    for id in &req.traffic {
+    for (id, token_hashes) in by_id {
         let Some(sb) = store.get_sandbox(id).map_err(ise)? else {
             continue;
         };
@@ -2472,11 +2481,16 @@ pub(super) fn apply_traffic(st: &St, req: &PollRequest) -> Result<(), ApiErr> {
             tracing::warn!(sandbox = %id, node = %req.node_id, holder = %sb.node_id, "ignored traffic reported by a node that does not hold the sandbox");
             continue;
         }
+        if !token_hashes.is_empty()
+            && !token_hashes.contains(&GatewayActivity::hash_token(&sb.token).as_str())
+        {
+            continue;
+        }
         store.touch(id).map_err(ise)?;
         let serving = req
             .observed
             .iter()
-            .any(|o| &o.id == id && o.tier.is_serving());
+            .any(|o| o.id == id && o.tier.is_serving());
         let asked_for = st
             .explicit_tier
             .lock()

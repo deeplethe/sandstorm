@@ -8,7 +8,7 @@ use std::sync::Arc;
 use sandstorm_core::identity::Ca;
 use sandstorm_core::master::{router, MasterState};
 use sandstorm_core::proto::{
-    Command, Egress, ImageConfig, ObservedSandbox, PollResponse, TemplatePull,
+    Command, Egress, GatewayActivity, ImageConfig, ObservedSandbox, PollResponse, TemplatePull,
 };
 use sandstorm_core::state::Store;
 use sandstorm_core::tier::Tier;
@@ -2837,6 +2837,110 @@ async fn traffic_at_the_gateway_keeps_a_woken_sandbox_awake() {
         .unwrap();
     assert!(resp.commands.is_empty(), "got {:?}", resp.commands);
     assert_eq!(tier().await, "frozen");
+}
+
+/// A retry must follow the sandbox instance whose gateway saw the request.
+#[tokio::test]
+async fn gateway_activity_cannot_wake_a_replacement_with_the_same_id() {
+    let h = start().await;
+    let node = "bm-1";
+    let id = "reused-id";
+    register(&h, node, "default").await;
+    put_template(&h, "python").await;
+    let c = reqwest::Client::new();
+    let url = format!("{}/v1/sandboxes/{id}", h.base);
+    let create = || async {
+        let created = c
+            .post(format!("{}/v1/sandboxes", h.base))
+            .json(&serde_json::json!({ "template": "python", "id": id, "node_id": node }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(created.status(), 201);
+        let body: serde_json::Value = created.json().await.unwrap();
+        assert_eq!(body["id"], id);
+        assert_eq!(body["node_id"], node);
+        body["token"].as_str().unwrap().to_owned()
+    };
+    let old_token = create().await;
+    assert_eq!(c.delete(&url).send().await.unwrap().status(), 204);
+    let current_token = create().await;
+    assert_ne!(old_token, current_token);
+    let resp = c
+        .post(format!("{url}/tier"))
+        .json(&serde_json::json!({ "tier": "snapshot" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    let db = rusqlite::Connection::open(h._td.path().join("state.db")).unwrap();
+    db.execute("UPDATE sandboxes SET last_active_at=1 WHERE id=?1", [id])
+        .unwrap();
+    let poll = |activity: GatewayActivity, legacy: &[&str]| {
+        let body = serde_json::json!({
+            "node_id": node,
+            "observed": [ObservedSandbox {
+                id: id.to_owned(),
+                tier: Tier::Hot,
+                serving: true,
+                ip: None,
+                net_index: None,
+                egress: None,
+            }],
+            "free_memory_mib": 2000,
+            "pressure_some_avg10": 0.0,
+            "hold_ms": 0,
+            "traffic": legacy,
+            "gateway_activity": [activity],
+        });
+        let request = c.post(format!("{}/v1/node/poll", h.base)).json(&body);
+        async move {
+            request
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json::<PollResponse>()
+                .await
+                .unwrap()
+        }
+    };
+    let inspect = || async {
+        let sb: serde_json::Value = c
+            .get(&url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        sb
+    };
+
+    // The typed entry must override its mirrored ID-only entry, even when
+    // the node now observes the replacement hot.
+    let stale = poll(GatewayActivity::new(id, &old_token), &[id]).await;
+    let replacement = inspect().await;
+    assert_eq!(replacement["tier"], "snapshot");
+    assert_eq!(replacement["last_active_at"], 1);
+    assert!(
+        stale.commands.iter().any(|command| matches!(
+            command,
+            Command::SetTier { id: command_id, tier: Tier::Snapshot } if command_id == id
+        )),
+        "got {:?}",
+        stale.commands
+    );
+
+    let current = poll(GatewayActivity::new(id, &current_token), &[]).await;
+    let replacement = inspect().await;
+    assert_eq!(replacement["tier"], "hot");
+    assert!(replacement["last_active_at"].as_i64().unwrap() > 1);
+    assert!(current.commands.is_empty(), "got {:?}", current.commands);
 }
 
 /// A polling node reports a wake out of turn, so the master's view is right
