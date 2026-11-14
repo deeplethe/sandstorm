@@ -155,7 +155,7 @@ snapshot_host() {
 
 getval() { sed -n "s/^$2=//p" "$1" | head -1; }
 
-# curl the master, from the master, over loopback. The workstation may
+# curl the master, from the master. The workstation may
 # have no route to the control plane -- a fleet behind NAT is the normal
 # case -- and nothing here needs one.
 mapi() {
@@ -163,8 +163,8 @@ mapi() {
   # Built as one string for the REMOTE shell to parse, with the quotes
   # the remote needs. An array expanded with ${a[*]} would arrive as
   # bare words and "Bearer <token>" would become two arguments.
-  local cmd
-  cmd="sudo curl -sS --cacert /var/lib/sandstorm/pki/ca.pem"
+  local cmd response code
+  cmd="sudo curl -sS --write-out '\n%{http_code}' --cacert /var/lib/sandstorm/pki/ca.pem"
   cmd="$cmd -H \"authorization: Bearer \$(sudo cat /var/lib/sandstorm/pki/api-token)\""
   cmd="$cmd -H 'content-type: application/json' -X $method"
   [ -n "$body" ] && cmd="$cmd --data-raw '$body'"
@@ -172,7 +172,25 @@ mapi() {
   # by default now, so 127.0.0.1 answers nothing. Its certificate carries
   # the bind address as a SAN, so this verifies.
   cmd="$cmd 'https://${MASTER_BIND:-127.0.0.1}:$MASTER_PORT$path'"
-  sshq "$MASTER_HOST" "$cmd"
+  if ! response=$(sshq "$MASTER_HOST" "$cmd"); then
+    printf '%s %s: could not complete the request\n' "$method" "$path" >&2
+    return 1
+  fi
+  # Strip only the status curl appended. Leave the body on stdout for
+  # successful callers, including an empty body after HTTP 204.
+  code=${response##*$'\n'}
+  case "$response" in
+    *$'\n'[0-9][0-9][0-9]) response=${response%$'\n'*} ;;
+    *) printf '%s %s: missing HTTP status\n' "$method" "$path" >&2; return 1 ;;
+  esac
+  case "$code" in
+    2[0-9][0-9]) printf '%s' "$response" ;;
+    *)
+      printf '%s %s: HTTP %s\n' "$method" "$path" "$code" >&2
+      [ -z "$response" ] || printf '%.200s\n' "$response" >&2
+      return 1
+      ;;
+  esac
 }
 
 preflight() {
@@ -557,7 +575,7 @@ EOF
   say "registering it on the master"
   local body
   body="{\"name\":\"$NAME\",\"rootfs\":\"rootfs\",\"spec\":{\"args\":[\"/usr/bin/python3\",\"/app/s.py\"],\"memory_max_mib\":$MEM}}"
-  if mapi POST /v1/templates "$body" >/dev/null 2>&1; then
+  if mapi POST /v1/templates "$body" >/dev/null; then
     ok "template '$NAME' registered"
     say "now:  python3 bench/fleet/loadtest.py --master https://$MASTER_ADDR:$PORT --ca $CA \\"
     echo "        --token-file <(printf %s \"\$(sed -n s/^TOKEN=//p $STATE)\") --template $NAME --total 50"
@@ -587,25 +605,32 @@ cmd_verify() {
 
   say "creating one '$NAME' sandbox and waiting for the node to start it"
   local made id
-  made=$(mapi POST /v1/sandboxes "{\"template\":\"$NAME\",\"pool\":\"$POOL\"}")
+  made=$(mapi POST /v1/sandboxes "{\"template\":\"$NAME\",\"pool\":\"$POOL\"}") \
+    || die "the master would not create a probe sandbox"
   id=$(printf '%s' "$made" | python3 -c 'import json,sys
-try: print(json.load(sys.stdin)["id"])
-except Exception: pass' 2>/dev/null)
-  [ -n "$id" ] || die "the master would not create one: $(printf '%s' "$made" | head -c 200)"
+sid = json.load(sys.stdin)["id"]
+if isinstance(sid, str): print(sid)' 2>/dev/null)
+  [ -n "$id" ] || die "the master did not return a probe sandbox ID"
 
-  local i state
+  local i state reply
   for i in $(seq 1 30); do
     sleep 2
-    state=$(mapi GET "/v1/sandboxes/$id" | python3 -c 'import json,sys
+    if ! reply=$(mapi GET "/v1/sandboxes/$id") ||
+       ! state=$(printf '%s' "$reply" | python3 -c 'import json,sys
 s = json.load(sys.stdin)
 if s.get("ip"): print("up|" + s["ip"])
 elif s.get("last_error"): print("failed|" + s["last_error"].split(chr(10))[0])
-else: print("pending|")' 2>/dev/null)
+else: print("pending|")' 2>/dev/null); then
+      state="check-error"
+      break
+    fi
     case "$state" in up\|*|failed\|*) break;; esac
   done
 
-  mapi DELETE "/v1/sandboxes/$id" >/dev/null 2>&1
+  mapi DELETE "/v1/sandboxes/$id" >/dev/null \
+    || die "could not delete probe sandbox $id"
   case "$state" in
+    check-error) die "could not check probe sandbox $id" ;;
     up\|*)
       ok "a sandbox ran: ${state#up|}"
       say "the fleet can actually do work"
