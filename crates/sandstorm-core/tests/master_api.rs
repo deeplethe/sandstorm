@@ -1036,12 +1036,13 @@ async fn a_loaded_node_stops_being_given_sandboxes() {
                 .unwrap();
         }
     };
-    let create = || {
+    let create = |node_id: Option<&str>| {
         let base = h.base.clone();
+        let request = serde_json::json!({ "template": "python", "node_id": node_id });
         async move {
             reqwest::Client::new()
                 .post(format!("{base}/v1/sandboxes"))
-                .json(&serde_json::json!({ "template": "python" }))
+                .json(&request)
                 .send()
                 .await
                 .unwrap()
@@ -1050,30 +1051,34 @@ async fn a_loaded_node_stops_being_given_sandboxes() {
 
     // A healthy node takes work.
     report(2000, 0.5).await;
-    assert_eq!(create().await.status(), 201);
+    assert_eq!(create(None).await.status(), 201);
 
     // Low on memory: refused, with the reason.
     report(400, 0.5).await;
-    let r = create().await;
-    assert_eq!(r.status(), 503);
-    let body: serde_json::Value = r.json().await.unwrap();
-    let msg = body["error"].as_str().unwrap();
-    assert!(
-        msg.contains("too loaded") && msg.contains("400 MiB free"),
-        "got {msg}"
-    );
+    for node_id in [None, Some("bm-1")] {
+        let r = create(node_id).await;
+        assert_eq!(r.status(), 503);
+        let body: serde_json::Value = r.json().await.unwrap();
+        let msg = body["error"].as_str().unwrap();
+        assert!(
+            msg.contains("too loaded") && msg.contains("400 MiB free"),
+            "got {msg}"
+        );
+    }
 
     // Memory fine but thrashing: also refused. This is the case free memory
     // alone misses -- on bm the apparent per-sandbox cost FELL from 22.8 to
     // 16.6 MiB while pressure climbed, because swap was absorbing it.
     report(2000, 20.0).await;
-    let r = create().await;
-    assert_eq!(r.status(), 503);
-    let msg = r.json::<serde_json::Value>().await.unwrap()["error"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(msg.contains("pressure 20.0"), "got {msg}");
+    for node_id in [None, Some("bm-1")] {
+        let r = create(node_id).await;
+        assert_eq!(r.status(), 503);
+        let msg = r.json::<serde_json::Value>().await.unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(msg.contains("pressure 20.0"), "got {msg}");
+    }
 
     // And it is visible on the node, not only in the refusal.
     let nodes: serde_json::Value = c
@@ -1092,7 +1097,7 @@ async fn a_loaded_node_stops_being_given_sandboxes() {
 
     // Recovering lets it take work again.
     report(2000, 0.2).await;
-    assert_eq!(create().await.status(), 201);
+    assert_eq!(create(Some("bm-1")).await.status(), 201);
 }
 
 /// `max_sandboxes` is what the node says it will carry. It was reported on
@@ -3177,68 +3182,145 @@ async fn a_held_back_create_is_never_given_up_on() {
 
 #[tokio::test]
 async fn pool_batch_respects_whole_node_capacity() {
-    // (capacity, existing count, requested count, expected status)
-    for (capacity, existing, requested, status) in [
-        (1, 0, 2, 503),
-        (2, 1, 2, 503),
-        (3, 1, 2, 201),
-        (0, 1, 3, 201),
-        (1, 0, 1, 201),
-        (1, 1, 1, 503),
+    for (source, named_node) in [
+        ("template", false),
+        ("template", true),
+        ("snapshot_tag", false),
+        ("snapshot_tag", true),
     ] {
+        // (capacity, existing count, requested count, expected status)
+        for (capacity, existing, requested, status) in [
+            (1, 0, 2, 503),
+            (2, 1, 2, 503),
+            (2, 1, 1, 201),
+            (3, 1, 2, 201),
+            (0, 1, 3, 201),
+            (1, 0, 1, 201),
+            (1, 1, 1, 503),
+        ] {
+            let h = start().await;
+            register_with_cap(&h, "node", "workers", capacity).await;
+            register(&h, "spare", "default").await;
+            put_template(&h, "python").await;
+            let c = reqwest::Client::new();
+            for _ in 0..existing {
+                let r = c
+                    .post(format!("{}/v1/sandboxes", h.base))
+                    .json(&serde_json::json!({"template": "python", "node_id": "node"}))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(r.status(), 201);
+            }
+            let store = Store::open(h._td.path().join("state.db")).unwrap();
+            if source == "snapshot_tag" {
+                // No agent address: even a matching spare cannot fetch this image.
+                store
+                    .put_snapshot(&sandstorm_core::state::SnapshotTag {
+                        tag: "fixed-source".into(),
+                        node_id: "node".into(),
+                        template: "python".into(),
+                        from_sandbox: None,
+                        created_at: sandstorm_core::state::now_secs(),
+                        size_bytes: 1024,
+                        port: None,
+                    })
+                    .unwrap();
+                store
+                    .set_snapshot_fingerprint("fixed-source", "abc123")
+                    .unwrap();
+            }
+            let mut request = serde_json::json!({"n": requested, "pool": "workers"});
+            request[source] = if source == "template" {
+                "python".into()
+            } else {
+                "fixed-source".into()
+            };
+            if named_node {
+                request["node_id"] = "node".into();
+                request["pool"] = "default".into();
+            }
+            if status == 503 {
+                assert_create_refused_without_allocating(&h, "node", &request).await;
+            } else {
+                let r = c
+                    .post(format!("{}/v1/sandboxes", h.base))
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    r.status(),
+                    status,
+                    "{request}: capacity={capacity}, existing={existing}"
+                );
+                let sandboxes = store.list_sandboxes().unwrap();
+                assert_eq!(sandboxes.len(), (existing + requested) as usize);
+                assert!(sandboxes
+                    .iter()
+                    .all(|s| s.node_id == "node" && s.pool == "workers"));
+            }
+            assert_eq!(store.count_sandboxes_on_node("spare").unwrap(), 0);
+        }
+    }
+}
+
+async fn assert_create_refused_without_allocating(
+    h: &Harness,
+    node_id: &str,
+    request: &serde_json::Value,
+) {
+    let store = Store::open(h._td.path().join("state.db")).unwrap();
+    let before = format!("{:?}", store.list_sandboxes().unwrap());
+    let port_before = store.allocate_gateway_port(node_id, 20000, 20010).unwrap();
+    let net_before = store.allocate_net_index(node_id, 100).unwrap();
+    let c = reqwest::Client::new();
+    let r = c
+        .post(format!("{}/v1/sandboxes", h.base))
+        .json(request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 503, "{request}");
+    assert_eq!(format!("{:?}", store.list_sandboxes().unwrap()), before);
+    assert_eq!(
+        store.allocate_gateway_port(node_id, 20000, 20010).unwrap(),
+        port_before
+    );
+    assert_eq!(store.allocate_net_index(node_id, 100).unwrap(), net_before);
+    let metrics = c
+        .get(format!("{}/metrics", h.base))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        metrics.contains("sandstorm_sandbox_creates_total{outcome=\"refused\"} 1\n"),
+        "{metrics}"
+    );
+}
+
+#[tokio::test]
+async fn a_named_node_must_exist_and_be_online() {
+    for exists in [false, true] {
         let h = start().await;
-        register_with_cap(&h, "node", "default", capacity).await;
+        register(&h, "spare", "default").await;
         put_template(&h, "python").await;
-        let c = reqwest::Client::new();
-        for _ in 0..existing {
-            let r = c
-                .post(format!("{}/v1/sandboxes", h.base))
-                .json(&serde_json::json!({"template": "python"}))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 201);
-        }
-        let store = Store::open(h._td.path().join("state.db")).unwrap();
-        let before = format!("{:?}", store.list_sandboxes().unwrap());
-        let port_before = store.allocate_gateway_port("node", 20000, 20010).unwrap();
-        let net_before = store.allocate_net_index("node", 100).unwrap();
-        let r = c
-            .post(format!("{}/v1/sandboxes", h.base))
-            .json(&serde_json::json!({"template": "python", "n": requested}))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            r.status(),
-            status,
-            "capacity={capacity}, existing={existing}, requested={requested}"
-        );
-        if status == 503 {
-            assert_eq!(format!("{:?}", store.list_sandboxes().unwrap()), before);
-            assert_eq!(
-                store.allocate_gateway_port("node", 20000, 20010).unwrap(),
-                port_before
-            );
-            assert_eq!(store.allocate_net_index("node", 100).unwrap(), net_before);
-            let metrics = c
-                .get(format!("{}/metrics", h.base))
-                .send()
-                .await
+        if exists {
+            register(&h, "node", "workers").await;
+            Store::open(h._td.path().join("state.db"))
                 .unwrap()
-                .text()
-                .await
+                .set_node_connected("node", false)
                 .unwrap();
-            assert!(
-                metrics.contains("sandstorm_sandbox_creates_total{outcome=\"refused\"} 1\n"),
-                "{metrics}"
-            );
-        } else {
-            assert_eq!(
-                store.list_sandboxes().unwrap().len(),
-                (existing + requested) as usize
-            );
         }
+        assert_create_refused_without_allocating(
+            &h,
+            "node",
+            &serde_json::json!({"template": "python", "node_id": "node", "n": 2}),
+        )
+        .await;
     }
 }
 
