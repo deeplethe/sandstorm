@@ -776,13 +776,14 @@ impl Store {
         Ok(n > 0)
     }
 
-    pub fn set_node_health(&self, id: &str, free_mib: u64, psi: f64) -> Result<()> {
-        self.conn.execute(
+    /// False if the node is absent or revoked; a stale report cannot reconnect it.
+    pub fn set_node_health(&self, id: &str, free_mib: u64, psi: f64) -> Result<bool> {
+        let updated = self.conn.execute(
             "UPDATE nodes SET connected=1, last_seen_at=?2, free_mib=?3, psi_some_avg10=?4
-             WHERE id=?1",
+             WHERE id=?1 AND revoked=0",
             params![id, now_secs(), free_mib as i64, psi],
         )?;
-        Ok(())
+        Ok(updated > 0)
     }
 
     pub fn list_nodes(&self) -> Result<Vec<Node>> {
@@ -1346,36 +1347,49 @@ impl Store {
 
     /// A template to pull from `image`, or another try at one. `spec` holds
     /// what the caller asked for until a node reports what the image says.
+    /// A retry can supply a program while the template is still pending.
     /// Refused, by answering false, for a name that means something else.
     pub fn put_image_template(&self, name: &str, image: &str, spec: &str) -> Result<bool> {
-        let had: Option<Option<String>> = self
-            .conn
+        let tx = self.transaction()?;
+        let had: Option<(Option<String>, String)> = tx
             .query_row(
-                "SELECT image FROM templates WHERE name=?1",
+                "SELECT image, spec FROM templates WHERE name=?1",
                 params![name],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
         match had {
-            Some(i) if i.as_deref() != Some(image) => return Ok(false),
-            Some(_) => {
-                self.conn.execute(
-                    "UPDATE templates SET attempt=attempt+1 WHERE name=?1",
-                    params![name],
+            Some((i, _)) if i.as_deref() != Some(image) => return Ok(false),
+            Some((_, mut saved_spec)) => {
+                let mut saved: serde_json::Value = serde_json::from_str(&saved_spec)?;
+                if saved["pending"].as_bool() == Some(true) {
+                    let mut retry: serde_json::Value = serde_json::from_str(spec)?;
+                    if retry["args"]
+                        .as_array()
+                        .is_some_and(|args| !args.is_empty())
+                    {
+                        saved["args"] = retry["args"].take();
+                        saved_spec = saved.to_string();
+                    }
+                }
+                tx.execute(
+                    "UPDATE templates SET attempt=attempt+1, spec=?2 WHERE name=?1",
+                    params![name, saved_spec],
                 )?;
-                self.conn.execute(
+                tx.execute(
                     "DELETE FROM template_pulls WHERE template=?1",
                     params![name],
                 )?;
             }
             None => {
-                self.conn.execute(
+                tx.execute(
                     "INSERT INTO templates (name, rootfs, spec, created_at, image, attempt)
                      VALUES (?1,'rootfs',?2,?3,?4,1)",
                     params![name, spec, now_secs(), image],
                 )?;
             }
         }
+        tx.commit()?;
         Ok(true)
     }
 
@@ -1884,11 +1898,22 @@ mod tests {
             psi_some_avg10: 0.0,
         })
         .unwrap();
-        s.set_node_health("bm-1", 408, 15.6).unwrap();
+        assert!(s.set_node_health("bm-1", 408, 15.6).unwrap());
         let n = &s.list_nodes().unwrap()[0];
         assert_eq!(n.free_mib, 408);
         assert!((n.psi_some_avg10 - 15.6).abs() < 1e-9);
         assert!(n.connected, "reporting health means it is connected");
+
+        s.revoke_node("bm-1").unwrap();
+        assert!(!s.set_node_health("bm-1", 1024, 0.0).unwrap());
+        let n = &s.list_nodes().unwrap()[0];
+        assert!(!n.connected, "a revoked node stays offline");
+        assert_eq!(n.free_mib, 408, "a revoked report does not update health");
+        assert!((n.psi_some_avg10 - 15.6).abs() < 1e-9);
+
+        s.set_node_cert("bm-1", "new-certificate").unwrap();
+        assert!(s.set_node_health("bm-1", 1024, 0.0).unwrap());
+        assert!(s.list_nodes().unwrap()[0].connected);
     }
 
     /// A restart must not inherit the last run's connectivity.

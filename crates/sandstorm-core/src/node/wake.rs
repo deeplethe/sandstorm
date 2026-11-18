@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::proto::ObservedSandbox;
+use crate::proto::{GatewayActivity, ObservedSandbox};
 use crate::tier::Tier;
 
 /// How long a sandbox that has just come up -- created, or restored for the
@@ -110,7 +110,7 @@ pub struct Wakeups {
     /// When each sandbox last had a request through the gateway.
     seen: Mutex<HashMap<String, Instant>>,
     /// Requests the master has not been told about yet.
-    unreported: Mutex<HashSet<String>>,
+    unreported: Mutex<Traffic>,
     /// When each sandbox last served a request, or came up. Unlike `seen`
     /// it is kept for the sandbox's life: it is how a wake that needs
     /// memory picks which idle sandbox to put away.
@@ -146,6 +146,12 @@ pub struct Wakeups {
     /// be further back is refused at once: it would not start in time.
     max_waiting: usize,
     waiting: AtomicUsize,
+}
+
+#[derive(Default)]
+struct Traffic {
+    fresh: HashSet<GatewayActivity>,
+    retry: HashSet<GatewayActivity>,
 }
 
 impl Wakeups {
@@ -196,8 +202,12 @@ impl Wakeups {
     }
 
     /// A request for this sandbox reached the gateway.
-    pub fn saw(&self, id: &str) {
+    pub fn saw(&self, id: &str, token: &str) {
         self.saw_at(id, Instant::now());
+        self.unreported
+            .lock()
+            .fresh
+            .insert(GatewayActivity::new(id, token));
     }
 
     pub(super) fn saw_at(&self, id: &str, now: Instant) {
@@ -207,7 +217,6 @@ impl Wakeups {
         drop(demand);
         let prev = self.seen.lock().insert(id.to_string(), now);
         self.used.lock().insert(id.to_string(), now);
-        self.unreported.lock().insert(id.to_string());
         // `seen` forgets anything older than GRACE, so no entry also means
         // a quiet spell.
         if prev.is_none_or(|p| now.saturating_duration_since(p) >= GRACE) {
@@ -267,17 +276,32 @@ impl Wakeups {
             .filter(|d| !d.is_zero())
     }
 
-    /// The sandboxes to report as used, emptied as it is read.
-    pub fn take_traffic(&self) -> Vec<String> {
+    /// Drain fresh activity. Only a regular poll also takes failed early
+    /// reports, and only fresh activity goes into the legacy ID list.
+    pub fn take_traffic(&self, include_retries: bool) -> (Vec<String>, Vec<GatewayActivity>) {
         let now = Instant::now();
         // Pruned here because this runs on every report: nothing outside
         // the grace window is consulted again.
         self.seen
             .lock()
             .retain(|_, at| now.saturating_duration_since(*at) < GRACE);
-        let mut ids: Vec<String> = self.unreported.lock().drain().collect();
-        ids.sort();
-        ids
+        let (mut ids, mut activity) = {
+            let mut pending = self.unreported.lock();
+            let ids: Vec<_> = pending.fresh.iter().map(|e| e.id.clone()).collect();
+            let mut activity = std::mem::take(&mut pending.fresh);
+            if include_retries {
+                activity.extend(pending.retry.drain());
+            }
+            (ids, activity.into_iter().collect::<Vec<_>>())
+        };
+        ids.sort_unstable();
+        ids.dedup();
+        activity.sort_unstable();
+        (ids, activity)
+    }
+
+    pub fn retry_traffic(&self, activity: Vec<GatewayActivity>) {
+        self.unreported.lock().retry.extend(activity);
     }
 
     /// A sandbox just woke for a request, or just answered one. It counts
@@ -404,7 +428,10 @@ impl Wakeups {
         self.fresh.lock().remove(id);
         self.demand.lock().remove(id);
         self.evicted.lock().remove(id);
-        self.unreported.lock().remove(id);
+        let mut pending = self.unreported.lock();
+        pending.fresh.retain(|e| e.id != id);
+        pending.retry.retain(|e| e.id != id);
+        drop(pending);
         self.arrivals.lock().remove(id);
         self.prefetched.lock().remove(id);
     }
@@ -521,18 +548,27 @@ mod tests {
     #[test]
     fn traffic_is_reported_once() {
         let w = Wakeups::new(|_, _, _| Ok(()));
-        w.saw("a");
-        w.saw("b");
-        w.saw("a");
-        assert_eq!(w.take_traffic(), vec!["a".to_string(), "b".to_string()]);
-        assert!(w.take_traffic().is_empty(), "already reported");
+        w.saw("a", "token");
+        w.saw("b", "token");
+        w.saw("a", "token");
+        assert_eq!(
+            w.take_traffic(true),
+            (
+                vec!["a".to_string(), "b".to_string()],
+                vec![
+                    GatewayActivity::new("a", "token"),
+                    GatewayActivity::new("b", "token")
+                ],
+            )
+        );
+        assert!(w.take_traffic(true).1.is_empty(), "already reported");
     }
 
     #[test]
     fn grace_runs_out() {
         let w = Wakeups::new(|_, _, _| Ok(()));
         assert_eq!(w.in_grace("a", Instant::now()), None, "never seen");
-        w.saw("a");
+        w.saw("a", "token");
         let left = w.in_grace("a", Instant::now()).expect("just seen");
         assert!(left <= GRACE && left > GRACE - Duration::from_secs(1));
         assert_eq!(w.in_grace("a", Instant::now() + GRACE), None);
@@ -646,13 +682,13 @@ mod tests {
     #[test]
     fn forgetting_drops_everything() {
         let w = Wakeups::new(|_, _, _| Ok(()));
-        w.saw("a");
+        w.saw("a", "token");
         w.started("a");
         w.forget("a");
         assert!(w.demand.lock().is_empty());
         assert!(w.fresh.lock().is_empty());
         assert_eq!(w.in_grace("a", Instant::now()), None);
-        assert!(w.take_traffic().is_empty());
+        assert!(w.take_traffic(true).1.is_empty());
     }
 
     /// The point of the per-sandbox lock: a wake must not run runsc while

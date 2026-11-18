@@ -1,5 +1,6 @@
 """The tools against a stand-in for a master, as docs/API.md describes it."""
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -112,6 +113,72 @@ def test_the_start_timeout_covers_the_whole_batch(monkeypatch):
     with pytest.raises(RuntimeError, match='sb-0 did not start'):
         server.spawn_sandboxes(template='python', n=3, start_timeout_secs=0.05)
     assert not any(r.url.path.endswith('/sb-1') and r.method == 'GET' for r in master.requests)
+
+
+def test_a_late_ready_reply_cleans_up_only_the_created_batch(monkeypatch):
+    clock = 0.0
+    monkeypatch.setattr(server, 'time', SimpleNamespace(monotonic=lambda: clock))
+
+    class SlowMaster(Master):
+        def handle(self, request):
+            nonlocal clock
+            if request.method == 'GET':
+                clock += 0.5 if request.url.path.endswith('/sb-0') else 1.0
+            return super().handle(request)
+
+    master = use(monkeypatch, SlowMaster())
+    with pytest.raises(RuntimeError, match='sb-1 did not start in time'):
+        server.spawn_sandboxes(template='python', n=2, start_timeout_secs=1)
+
+    assert master.calls() == [
+        'POST /v1/sandboxes',
+        'GET /v1/sandboxes/sb-0',
+        'GET /v1/sandboxes/sb-1',
+        'DELETE /v1/sandboxes/sb-0',
+        'DELETE /v1/sandboxes/sb-1',
+    ]
+    assert [r.extensions['timeout']['read'] for r in master.requests[1:3]] == [1.0, 0.5]
+    assert master.requests[-1].extensions['timeout']['read'] == server.HTTP_TIMEOUT
+
+
+def test_a_late_status_failure_preserves_the_http_error(monkeypatch):
+    clock = 0.0
+    monkeypatch.setattr(server, 'time', SimpleNamespace(monotonic=lambda: clock))
+
+    class MissingSandboxMaster(Master):
+        def handle(self, request):
+            nonlocal clock
+            if request.method == 'GET':
+                self.requests.append(request)
+                clock += 2
+                return httpx.Response(404, json={'error': 'missing sandbox'})
+            return super().handle(request)
+
+    master = use(monkeypatch, MissingSandboxMaster())
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        server.spawn_sandboxes(template='python', start_timeout_secs=1)
+    assert error.value.response.status_code == 404
+    assert master.calls()[-1] == 'DELETE /v1/sandboxes/sb-0'
+
+
+def test_a_status_request_that_uses_the_remaining_budget_reports_a_start_timeout(monkeypatch):
+    clock = 0.0
+    monkeypatch.setattr(server, 'time', SimpleNamespace(monotonic=lambda: clock))
+
+    class UnresponsiveMaster(Master):
+        def handle(self, request):
+            nonlocal clock
+            if request.method == 'GET':
+                self.requests.append(request)
+                clock += request.extensions['timeout']['read']
+                raise httpx.ReadTimeout('status request timed out', request=request)
+            return super().handle(request)
+
+    master = use(monkeypatch, UnresponsiveMaster())
+    with pytest.raises(RuntimeError, match='sb-0 did not start in time'):
+        server.spawn_sandboxes(template='python', start_timeout_secs=1)
+    assert master.calls()[-1] == 'DELETE /v1/sandboxes/sb-0'
+    assert master.requests[1].extensions['timeout']['read'] == 1.0
 
 
 def test_a_tag_is_encoded(master):

@@ -3,14 +3,15 @@
 // 20,000 the whole list is about 10 MB, and the table only shows a page.
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Egress, SandboxView, Tier } from "../types";
-import { api, apiDelete, apiPage, auth } from "../api";
+import { api, apiDelete } from "../api";
 import { ago, compact, fmt } from "../format";
 import { st } from "../state";
 import { keepPageSize, pageSize } from "../storage";
 import { TIERS, TIER_LABEL } from "../theme";
 import { Dropdown } from "../components/Dropdown";
 import { Pager } from "../components/Pager";
-import { useArm, useDebounced, useEscape, useTabLoad } from "../components/hooks";
+import { useArm, useEscape } from "../components/hooks";
+import { usePagedList } from "../components/usePagedList";
 import { Network, type NetworkTarget } from "../dialogs/Network";
 import { NewSandbox } from "../dialogs/NewSandbox";
 
@@ -52,7 +53,7 @@ function reach(e: Egress): string {
 export function Sandboxes() {
   const [tier, setTier] = useState("");
   const [qIn, setQIn] = useState("");
-  const q = useDebounced(qIn.trim(), 250);
+  const [q, setQ] = useState("");
   const [node, setNode] = useState("");
   const [offset, setOffset] = useState(0);
   const [size, setSize] = useState(() => pageSize("sandboxes", 20));
@@ -65,41 +66,37 @@ export function Sandboxes() {
   const [byDefault, setDefault] = useState<Egress | null>(null);
   const [network, setNetwork] = useState<NetworkTarget | null>(null);
   const [isArmed, arm, disarm] = useArm();
-  const busy = useRef(false), flashT = useRef(0), menuEl = useRef<HTMLDivElement>(null);
-  const want = useRef({ tier, q, node, offset, size });
-  want.current = { tier, q, node, offset, size };
+  const flashT = useRef(0), menuEl = useRef<HTMLDivElement>(null);
   const loaded = useRef(false);
 
   const flash = (msg: string, bad = false) => {
     setFlash({ msg, bad });
     clearTimeout(flashT.current); flashT.current = window.setTimeout(() => setFlash(null), 5000);
   };
-  const load = async (): Promise<void> => {
-    if (!auth.token || busy.current) return;
-    busy.current = true;
-    try {
-      const w = want.current;
-      const qs = new URLSearchParams({ limit: String(w.size), offset: String(w.offset) });
-      if (w.tier === "failing") qs.set("failing", "true"); else if (w.tier) qs.set("tier", w.tier);
-      if (w.q) qs.set("q", w.q);
-      if (w.node) qs.set("node", w.node);
-      const { total, rows } = await apiPage<SandboxView>("/v1/sandboxes?" + qs);
-      if (w.offset >= total && total > 0) { busy.current = false; setOffset(Math.floor((total - 1) / w.size) * w.size); return; }
+  const qs = new URLSearchParams({ limit: String(size), offset: String(offset) });
+  if (tier === "failing") qs.set("failing", "true"); else if (tier) qs.set("tier", tier);
+  if (q) qs.set("q", q);
+  if (node) qs.set("node", node);
+  const load = usePagedList<SandboxView>(
+    "sandboxes", "/v1/sandboxes?" + qs, true,
+    async ({ total, rows }, signal, isCurrent) => {
+      if (offset > 0 && offset >= total) {
+        setOffset(Math.floor(Math.max(0, total - 1) / size) * size);
+        return;
+      }
       loaded.current = true;
       setPage({ total, rows });
-      setDefault(await api<Egress>("/v1/egress"));
-    } catch (e) { if (String((e as Error).message) !== "401") flash(String((e as Error).message || e), true); }
-    finally { busy.current = false; }
-  };
-  useTabLoad("sandboxes", () => void load());
-  // A new filter or page: the first page of it, and nothing selected.
-  const first = useRef(true);
+      const egress = await api<Egress>("/v1/egress", undefined, { signal, showGateOnUnauthorized: false });
+      if (isCurrent()) setDefault(egress);
+    },
+    (error) => flash(String((error as Error).message || error), true),
+  );
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    if (st.tab === "sandboxes") void load();
-    // loads on what is asked for
-  }, [tier, q, node, offset, size]);
-  useEffect(() => { setOffset(0); setSel(new Set()); }, [q]);
+    const search = qIn.trim();
+    if (search === q) return;
+    const timer = setTimeout(() => { setQ(search); setOffset(0); setSel(new Set()); }, 250);
+    return () => clearTimeout(timer);
+  }, [qIn, q]);
 
   // The row menu.
   const closeMenu = () => setMenu(null);

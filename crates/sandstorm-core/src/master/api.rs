@@ -19,8 +19,8 @@ use crate::auth::{require_token, AuthConfig};
 use crate::identity::{random_token, Ca};
 use crate::node::BackendKind;
 use crate::proto::{
-    Command, CommandResult, Egress, FetchFrom, PollRequest, PollResponse, RegisterRequest,
-    RegisterResponse,
+    Command, CommandResult, Egress, FetchFrom, GatewayActivity, PollRequest, PollResponse,
+    RegisterRequest, RegisterResponse,
 };
 use crate::state::{now_secs, Node, Sandbox, SnapshotTag, Store};
 use crate::tier::{IdlePolicy, Tier};
@@ -1928,7 +1928,7 @@ async fn run_exec(
     args: Vec<String>,
     timeout_secs: u64,
 ) -> Result<CommandResult, ApiErr> {
-    let (node_id, tier) = {
+    let node_id = {
         let store = st.store();
         let Some(sb) = store
             .get_sandbox(id)
@@ -1936,17 +1936,24 @@ async fn run_exec(
         else {
             return Err(err(StatusCode::NOT_FOUND, "no such sandbox"));
         };
-        (sb.node_id, sb.tier)
+        // A command can only run in a sandbox that is running. Promoting first
+        // would hide a multi-second wait inside what looks like a quick call,
+        // so say so instead and let the caller decide.
+        if sb.tier != Tier::Hot {
+            return Err(err(
+                StatusCode::CONFLICT,
+                format!(
+                    "sandbox is {}; POST /v1/sandboxes/{id}/touch to bring it hot first",
+                    sb.tier
+                ),
+            ));
+        }
+        // Keep the hot check and touch atomic with respect to the idle sweep.
+        store
+            .touch(id)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        sb.node_id
     };
-    // A command can only run in a sandbox that is running. Promoting first
-    // would hide a multi-second wait inside what looks like a quick call,
-    // so say so instead and let the caller decide.
-    if tier != Tier::Hot {
-        return Err(err(
-            StatusCode::CONFLICT,
-            format!("sandbox is {tier}; POST /v1/sandboxes/{id}/touch to bring it hot first"),
-        ));
-    }
 
     let exec_id = random_token();
     let (tx, rx) = oneshot::channel();
@@ -1968,7 +1975,14 @@ async fn run_exec(
     // The node's own timeout plus room for a round trip and a loaded node.
     let budget = Duration::from_secs(timeout_secs.saturating_add(20));
     match tokio::time::timeout(budget, rx).await {
-        Ok(Ok(r)) => Ok(r),
+        Ok(Ok(r)) => {
+            // Idle starts at completion, including non-zero exits. Only touch:
+            // a manual freeze while this command ran must remain in force.
+            st.store()
+                .touch(id)
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            Ok(r)
+        }
         // Sender dropped, or nothing came back in time. Either way the
         // caller gets an answer rather than hanging.
         _ => {
@@ -2459,12 +2473,21 @@ pub(super) fn record_failures(st: &St, req: &PollRequest) -> Result<(), ApiErr> 
 /// that request's late report. Late traffic still moves the idle clock;
 /// it just does not overrule a demotion that came after it.
 pub(super) fn apply_traffic(st: &St, req: &PollRequest) -> Result<(), ApiErr> {
-    if req.traffic.is_empty() {
+    if req.traffic.is_empty() && req.gateway_activity.is_empty() {
         return Ok(());
+    }
+    let mut by_id: HashMap<&str, Vec<&str>> = HashMap::new();
+    for event in &req.gateway_activity {
+        by_id.entry(&event.id).or_default().push(&event.token_hash);
+    }
+    // A scoped report is authoritative for its ID even if none of its
+    // events match. Use the legacy IDs only for unscoped entries.
+    for id in &req.traffic {
+        by_id.entry(id).or_default();
     }
     let store = st.store();
     let ise = |e: anyhow::Error| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
-    for id in &req.traffic {
+    for (id, token_hashes) in by_id {
         let Some(sb) = store.get_sandbox(id).map_err(ise)? else {
             continue;
         };
@@ -2472,11 +2495,16 @@ pub(super) fn apply_traffic(st: &St, req: &PollRequest) -> Result<(), ApiErr> {
             tracing::warn!(sandbox = %id, node = %req.node_id, holder = %sb.node_id, "ignored traffic reported by a node that does not hold the sandbox");
             continue;
         }
+        if !token_hashes.is_empty()
+            && !token_hashes.contains(&GatewayActivity::hash_token(&sb.token).as_str())
+        {
+            continue;
+        }
         store.touch(id).map_err(ise)?;
         let serving = req
             .observed
             .iter()
-            .any(|o| &o.id == id && o.tier.is_serving());
+            .any(|o| o.id == id && o.tier.is_serving());
         let asked_for = st
             .explicit_tier
             .lock()
@@ -2548,9 +2576,13 @@ fn record_host(
 /// store lock is never held across an await.
 pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
     let store = st.store();
-    store
+    let accepted = store
         .set_node_health(&req.node_id, req.free_memory_mib, req.pressure_some_avg10)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Certificate validation may predate a long-poll hold and revocation.
+    if !accepted {
+        return Err(err(StatusCode::FORBIDDEN, "node is absent or revoked"));
+    }
     // An empty list from an early wake report says nothing; keep the last.
     if !req.features.is_empty() {
         st.metrics
@@ -3165,15 +3197,18 @@ pub(super) async fn create_sandbox(
             vec![(n.id, n.pool); count as usize]
         }
         Place::Node(n) => {
-            let pool = store
-                .list_nodes()
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-                .into_iter()
-                .find(|x| &x.id == n)
-                .map(|x| x.pool)
-                .or_else(|| req.pool.clone())
-                .unwrap_or_else(|| "default".into());
-            vec![(n.clone(), pool); count as usize]
+            let node = pick_node_where(
+                &st,
+                &store,
+                &format!("node {n}"),
+                |node| &node.id == n,
+                &HashMap::new(),
+                count,
+            )
+            .inspect_err(|_| {
+                st.metrics.creates_refused.fetch_add(1, Relaxed);
+            })?;
+            vec![(node.id, node.pool); count as usize]
         }
         // A fork spreads: each child goes to the least loaded matching node,
         // counting the children already placed in this call.
