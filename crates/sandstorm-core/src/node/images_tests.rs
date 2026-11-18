@@ -291,3 +291,147 @@ fn firecracker_says_what_an_image_lacks() {
     apply(&[("usr/bin/python3", "x")], &root);
     check_bootable(&root).unwrap();
 }
+
+#[cfg(target_os = "linux")]
+fn assert_guest_scripts(root: &Path) {
+    for (name, contents, mode) in [
+        ("sandstorm-init.sh", INIT, 0o755),
+        ("sandstorm-agent.py", AGENT, 0o644),
+    ] {
+        let path = root.join(name);
+        let metadata = path.symlink_metadata().unwrap();
+        assert!(metadata.is_file(), "{name} must be a regular file");
+        assert_eq!(metadata.permissions().mode() & 0o7777, mode, "{name}");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), contents, "{name}");
+    }
+    assert_eq!(std::fs::read_dir(root).unwrap().count(), 2);
+}
+
+#[cfg(target_os = "linux")]
+fn assert_guest_script_replaces_symlink(name: &str) {
+    for relative in [false, true] {
+        let (td, root) = rootfs();
+        let marker = td.path().join("marker");
+        std::fs::write(&marker, "host data").unwrap();
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let target = if relative {
+            Path::new("../marker")
+        } else {
+            &marker
+        };
+        symlink(target, root.join(name)).unwrap();
+
+        install_guest_scripts(&root).unwrap();
+
+        assert!(
+            std::fs::read_to_string(&marker).unwrap() == "host data",
+            "{name}: host marker contents changed"
+        );
+        assert_eq!(
+            marker.metadata().unwrap().permissions().mode() & 0o7777,
+            0o640
+        );
+        assert_guest_scripts(&root);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn guest_scripts_replace_init_symlinks_without_touching_the_target() {
+    assert_guest_script_replaces_symlink("sandstorm-init.sh");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn guest_scripts_replace_agent_symlinks_without_touching_the_target() {
+    assert_guest_script_replaces_symlink("sandstorm-agent.py");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn guest_scripts_replace_existing_regular_files_with_new_inodes() {
+    let (_td, root) = rootfs();
+    let mut originals = Vec::new();
+    for name in ["sandstorm-init.sh", "sandstorm-agent.py"] {
+        let path = root.join(name);
+        std::fs::write(&path, "image script").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        originals.push((name, std::fs::File::open(path).unwrap()));
+    }
+
+    install_guest_scripts(&root).unwrap();
+
+    assert_guest_scripts(&root);
+    for (name, mut original) in originals {
+        let mut contents = String::new();
+        original.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "image script", "{name}");
+        let metadata = original.metadata().unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o7777, 0o400, "{name}");
+        assert_ne!(metadata.ino(), root.join(name).metadata().unwrap().ino());
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn guest_scripts_do_not_rewrite_hard_link_targets() {
+    for name in ["sandstorm-init.sh", "sandstorm-agent.py"] {
+        let (td, root) = rootfs();
+        let marker = td.path().join("marker");
+        std::fs::write(&marker, "host data").unwrap();
+        std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o640)).unwrap();
+        std::fs::hard_link(&marker, root.join(name)).unwrap();
+
+        install_guest_scripts(&root).unwrap();
+
+        assert!(
+            std::fs::read_to_string(&marker).unwrap() == "host data",
+            "{name}: host marker contents changed"
+        );
+        assert_eq!(
+            marker.metadata().unwrap().permissions().mode() & 0o7777,
+            0o640
+        );
+        assert_guest_scripts(&root);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn guest_scripts_reject_directories_and_stop_before_making_the_disk() {
+    for name in ["sandstorm-init.sh", "sandstorm-agent.py"] {
+        for empty in [false, true] {
+            let (td, root) = rootfs();
+            let directory = root.join(name);
+            std::fs::create_dir(&directory).unwrap();
+            if !empty {
+                std::fs::write(directory.join("keep"), "image data").unwrap();
+            }
+            let disk = td.path().join("rootfs.ext4");
+
+            let error = make_ext4(&root, &disk).unwrap_err();
+
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+                    .raw_os_error(),
+                Some(libc::EISDIR)
+            );
+            assert!(directory.is_dir());
+            if empty {
+                assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 0);
+            } else {
+                assert_eq!(
+                    std::fs::read_to_string(directory.join("keep")).unwrap(),
+                    "image data"
+                );
+            }
+            assert!(!disk.exists());
+            for entry in std::fs::read_dir(&root).unwrap() {
+                let name = entry.unwrap().file_name();
+                assert!(name == "sandstorm-init.sh" || name == "sandstorm-agent.py");
+            }
+        }
+    }
+}
