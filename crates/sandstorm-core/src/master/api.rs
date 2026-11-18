@@ -2548,9 +2548,13 @@ fn record_host(
 /// store lock is never held across an await.
 pub(super) fn diff(st: &St, req: &PollRequest) -> Result<Vec<Command>, ApiErr> {
     let store = st.store();
-    store
+    let accepted = store
         .set_node_health(&req.node_id, req.free_memory_mib, req.pressure_some_avg10)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Certificate validation may predate a long-poll hold and revocation.
+    if !accepted {
+        return Err(err(StatusCode::FORBIDDEN, "node is absent or revoked"));
+    }
     // An empty list from an early wake report says nothing; keep the last.
     if !req.features.is_empty() {
         st.metrics
