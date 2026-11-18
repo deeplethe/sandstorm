@@ -97,21 +97,37 @@ def _wait_until_running(c: httpx.Client, sandbox_id: str, deadline: float) -> di
     something listening inside.
     """
     pause = 0.05
+    reason = "no reason recorded"
+    timeout_cause = None
     while True:
-        r = c.get(f"/v1/sandboxes/{sandbox_id}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            r = c.get(f"/v1/sandboxes/{sandbox_id}", timeout=min(HTTP_TIMEOUT, remaining))
+        except httpx.TimeoutException as exc:
+            if time.monotonic() < deadline:
+                raise
+            timeout_cause = exc
+            break
         r.raise_for_status()
+        if time.monotonic() >= deadline:
+            break
         seen = r.json()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         if seen.get("ip"):
             return seen
         reason = seen.get("last_error") or "no reason recorded"
         if seen.get("error_attempts", 0) >= MAX_START_FAILURES:
             raise RuntimeError(f"sandbox {sandbox_id} failed to start: {reason}")
-        if time.monotonic() + pause > deadline:
-            raise RuntimeError(
-                f"sandbox {sandbox_id} did not start in time; last error: {reason}"
-            )
-        time.sleep(pause)
+        time.sleep(min(pause, remaining))
         pause = min(pause * 2, 1.0)
+
+    raise RuntimeError(
+        f"sandbox {sandbox_id} did not start in time; last error: {reason}"
+    ) from timeout_cause
 
 
 @mcp.tool()

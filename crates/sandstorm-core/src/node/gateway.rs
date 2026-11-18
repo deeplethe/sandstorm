@@ -411,7 +411,7 @@ async fn proxy(State(t): State<Arc<Target>>, req: Request) -> Response {
     // in flight is deferred rather than pulling the sandbox out from under
     // it.
     if let Some(w) = &t.wake {
-        w.saw(&t.id);
+        w.saw(&t.id, &expected);
     }
     // Held to the end of the answer, the wake included: a sandbox with a
     // request in flight is never put away to make room.
@@ -766,7 +766,10 @@ mod tests {
         assert_eq!(woken.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         // Both requests are reported to the master, once.
-        assert_eq!(w.take_traffic(), vec!["sb-cold".to_string()]);
+        let (ids, activity) = w.take_traffic(true);
+        assert_eq!(ids, ["sb-cold"]);
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].id, "sb-cold");
         g.reconcile(&[]).await;
     }
 

@@ -7,14 +7,19 @@ and ping without that sandbox's token.
 """
 import json
 import re
+import socket
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
 import sandstorm
+import sandstorm.sandbox
 from sandstorm import Controller, ControllerError, Sandbox
 from sandstorm.controller import SANDBOX_TOKEN_HEADER
 
@@ -27,6 +32,7 @@ class FakeMaster:
     def __init__(self):
         self.requests = []
         self.sandboxes = {}
+        self.snapshots = set()
         self.reports_until_running = 0
         self.last_error = None
         self.error_attempts = 0
@@ -62,11 +68,19 @@ class FakeMaster:
         ).start()
 
     def answer(self, method, path, body, headers):
-        parts = path.split("/")[2:]
+        parts = urlsplit(path).path.split("/")[2:]
         if method == "POST" and parts == ["sandboxes"]:
             return self.create(body)
         if method == "GET" and parts == ["templates"]:
             return 200, ["python"]
+        if method == "GET" and parts == ["snapshots"]:
+            return 200, [{"tag": tag} for tag in sorted(self.snapshots)]
+        if method == "DELETE" and len(parts) == 2 and parts[0] == "snapshots":
+            tag = unquote(parts[1])
+            if tag not in self.snapshots:
+                return 404, {"error": f"no snapshot {tag}"}
+            self.snapshots.remove(tag)
+            return 204, None
         sandbox_id = parts[1]
         sb = self.sandboxes.get(sandbox_id)
         if sb is None:
@@ -231,6 +245,94 @@ def test_a_start_that_never_finishes_times_out_and_is_removed(master, controller
     assert master.sandboxes == {}
 
 
+@pytest.fixture
+def readiness_clock(monkeypatch):
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = Clock()
+    monkeypatch.setattr(sandstorm.sandbox, "time", clock)
+    return clock
+
+
+@pytest.mark.parametrize("create", [True, False], ids=["create", "connect"])
+def test_ready_response_after_deadline_is_rejected(
+    master, controller, readiness_clock, monkeypatch, create
+):
+    urlopen = urllib.request.urlopen
+
+    def late_status(request, **kwargs):
+        reply = urlopen(request, **kwargs)
+        if request.get_method() == "GET":
+            readiness_clock.now = 0.2
+        return reply
+
+    monkeypatch.setattr(urllib.request, "urlopen", late_status)
+    existing = controller.create_sandbox(template="py")
+    if create:
+        with pytest.raises(RuntimeError, match="did not start"):
+            Sandbox("py", controller=controller, start_timeout=0.1)
+        assert [request[1] for request in master.seen("DELETE")] == ["/v1/sandboxes/sb-2"]
+    else:
+        with pytest.raises(RuntimeError, match="did not start"):
+            Sandbox.connect(
+                existing["id"], existing["token"], controller=controller, start_timeout=0.1
+            )
+        assert master.seen("DELETE") == []
+    assert list(master.sandboxes) == [existing["id"]]
+
+
+def test_status_requests_and_backoff_use_remaining_budget(
+    master, controller, readiness_clock, monkeypatch
+):
+    master.reports_until_running = None
+    controller.timeout = 0.09
+    urlopen = urllib.request.urlopen
+    status_timeouts = []
+
+    def observe_status(request, **kwargs):
+        if request.get_method() == "GET":
+            status_timeouts.append(kwargs["timeout"])
+        return urlopen(request, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", observe_status)
+    with pytest.raises(RuntimeError, match="did not start"):
+        Sandbox("py", controller=controller, start_timeout=0.12)
+
+    assert status_timeouts == pytest.approx([0.09, 0.07])
+    assert readiness_clock.now == pytest.approx(0.12)
+    assert master.sandboxes == {}
+
+
+@pytest.mark.parametrize("controller_timeout", [0.05, 1.0])
+def test_transport_timeout_is_reported_as_start_timeout_only_at_deadline(
+    master, controller, readiness_clock, monkeypatch, controller_timeout
+):
+    controller.timeout = controller_timeout
+    urlopen = urllib.request.urlopen
+
+    def time_out(request, **kwargs):
+        if request.get_method() == "GET":
+            readiness_clock.now += kwargs["timeout"]
+            raise urllib.error.URLError(socket.timeout("timed out"))
+        return urlopen(request, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", time_out)
+    if controller_timeout < 0.1:
+        with pytest.raises(urllib.error.URLError, match="timed out"):
+            Sandbox("py", controller=controller, start_timeout=0.1)
+    else:
+        with pytest.raises(RuntimeError, match="did not start.*no reason recorded"):
+            Sandbox("py", controller=controller, start_timeout=0.1)
+    assert master.sandboxes == {}
+
+
 def test_a_failed_cleanup_keeps_the_start_error(master, controller, monkeypatch):
     master.reports_until_running = None
 
@@ -365,6 +467,24 @@ def test_connect_to_nothing_raises(controller):
 
 
 # ---- the Controller's own calls ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tag", "other_tag"),
+    [
+        ("checkpoint#draft", "checkpoint"),
+        ("checkpoint?draft", "checkpoint"),
+        ("checkpoint%23draft", "checkpoint#draft"),
+        ("周报 #1", "周报"),
+        ("checkpoint-draft", "checkpoint"),
+    ],
+)
+def test_delete_snapshot_removes_only_the_requested_tag(master, controller, tag, other_tag):
+    master.snapshots.update([tag, other_tag])
+
+    controller.delete_snapshot(tag)
+
+    assert controller.list_snapshots() == [{"tag": other_tag}]
 
 
 def test_branch_sends_the_tag_and_nothing_else(master, controller):
