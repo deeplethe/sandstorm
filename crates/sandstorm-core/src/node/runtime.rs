@@ -1525,7 +1525,16 @@ impl Runtime {
             let mut tar = tar
                 .arg("-C")
                 .arg(&layer)
-                .args(["-S", "-cf", "-", "."])
+                // Opaque directories and whiteouts must still hide the template after restore.
+                .args([
+                    "--xattrs",
+                    "--xattrs-include=trusted.overlay.*",
+                    "--xattrs-include=user.overlay.*",
+                    "-S",
+                    "-cf",
+                    "-",
+                    ".",
+                ])
                 .stdout(Stdio::piped())
                 .spawn()
                 .context("starting tar to archive layer")?;
