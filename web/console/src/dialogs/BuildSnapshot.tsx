@@ -14,7 +14,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { CreatedSandbox, ExecView, SnapshotView, TemplateEntry } from "../types";
-import { api, ApiError, auth, deleteQuietly } from "../api";
+import { api, apiDelete, ApiError, auth } from "../api";
 import { backendName, placeBody, placeNote, placeOptions, templateLabel } from "../backends";
 import { errorText, mib } from "../format";
 import { st } from "../state";
@@ -24,12 +24,12 @@ import { useArm, useEscape } from "../components/hooks";
 
 interface Build {
   id: string | null; token: string | null; node: string | null; base: string; cwd: string;
-  running: boolean; saved: SnapshotView | null; checked: boolean; from: "template" | "snapshot"; hist: string[]; at: number;
+  running: boolean; saved: SnapshotView | null; cleanupPending: boolean; checked: boolean; from: "template" | "snapshot"; hist: string[]; at: number;
 }
 const BD_TIMEOUT = 1800;
 
 function loadBuild(): Build {
-  const bd: Build = { id: null, token: null, node: null, base: "", cwd: "", running: false, saved: null, checked: false, from: "template", hist: [], at: 0 };
+  const bd: Build = { id: null, token: null, node: null, base: "", cwd: "", running: false, saved: null, cleanupPending: false, checked: false, from: "template", hist: [], at: 0 };
   try { Object.assign(bd, JSON.parse(session.get("sandstorm-build") || "{}")); } catch { /* none kept */ }
   if (!String(bd.cwd || "").startsWith("/")) bd.cwd = "";
   if (!Array.isArray(bd.hist)) bd.hist = [];
@@ -37,7 +37,10 @@ function loadBuild(): Build {
   return bd;
 }
 function keepBuild(bd: Build): void {
-  if (bd.id) session.set("sandstorm-build", JSON.stringify({ id: bd.id, token: bd.token, node: bd.node, base: bd.base, cwd: bd.cwd, hist: bd.hist.slice(-200) }));
+  if (bd.id) session.set("sandstorm-build", JSON.stringify({
+    id: bd.id, token: bd.token, node: bd.node, base: bd.base, cwd: bd.cwd, hist: bd.hist.slice(-200),
+    cleanupPending: bd.cleanupPending, saved: bd.cleanupPending ? bd.saved : null,
+  }));
   else session.remove("sandstorm-build");
 }
 // Escapes a terminal would act on are noise in a page.
@@ -68,7 +71,7 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
   const [, render] = useReducer((n: number) => n + 1, 0);
   const builderStep = render;
   const termEl = useRef<HTMLDivElement>(null), inEl = useRef<HTMLTextAreaElement>(null), tagEl = useRef<HTMLInputElement>(null);
-  const cleanupEl = useRef<HTMLInputElement>(null), startEl = useRef<HTMLButtonElement>(null);
+  const cleanupEl = useRef<HTMLInputElement>(null), startEl = useRef<HTMLButtonElement>(null), retryEl = useRef<HTMLButtonElement>(null);
   const openRef = useRef(open); openRef.current = open;
   const focusIn = useRef(false);
   const [isArmed, arm, disarm] = useArm();
@@ -122,6 +125,11 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
   }
   function bdBusy(on: boolean) { b.running = on; if (!on && b.id && openRef.current) focusIn.current = true; builderStep(); }
 
+  function clearBuildSandbox() {
+    b.id = null; b.token = null; b.cwd = ""; b.cleanupPending = false;
+    keepBuild(b);
+  }
+
   async function builderOptions() {
     if (!auth.token) return;
     try {
@@ -141,8 +149,16 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
       // A build left from before a reload: carry on with it if it is still there.
       if (b.id && !b.checked) {
         b.checked = true;
-        try { await api(`/v1/sandboxes/${encodeURIComponent(b.id)}`); termLine("dim", `Carrying on with build sandbox ${b.id}.`); }
-        catch (e) { if ((e as ApiError).status === 404) { termLine("dim", `Build sandbox ${b.id} is gone; start another.`); b.id = null; keepBuild(b); } }
+        const id = b.id;
+        try {
+          await api(`/v1/sandboxes/${encodeURIComponent(id)}`);
+          if (b.id === id) termLine("dim", `Carrying on with build sandbox ${id}.`);
+        } catch (e) {
+          if ((e as ApiError).status === 404 && b.id === id && !b.running) {
+            termLine("dim", `Build sandbox ${id} is gone.`);
+            clearBuildSandbox();
+          }
+        }
       }
     } catch (e) { if (String((e as Error).message) !== "401") termLine("bad", errorText(e)); }
     builderStep();
@@ -154,13 +170,16 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
   useEffect(() => {
     if (!open) return;
     void builderOptions();
-    const t = setTimeout(() => (b.id ? inEl.current : startEl.current)?.focus(), 30);
+    const t = setTimeout(() => (b.cleanupPending ? retryEl.current : b.id ? inEl.current : startEl.current)?.focus(), 30);
     return () => clearTimeout(t);
   }, [open]);
   // Closing leaves a build sandbox running, to come back to.
   useEscape(open, onClose);
   useEffect(() => { onLive(!!b.id); });
-  useLayoutEffect(() => { if (focusIn.current && inEl.current && !inEl.current.disabled) { focusIn.current = false; inEl.current.focus(); } });
+  useLayoutEffect(() => {
+    const target = b.cleanupPending ? retryEl.current : inEl.current;
+    if (focusIn.current && target && !target.disabled) { focusIn.current = false; target.focus(); }
+  });
 
   const start = async () => {
     const from = b.from, base = ui.current.base;
@@ -222,8 +241,10 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
   };
 
   const save = async () => {
+    if (!b.id || b.running || b.cleanupPending) return;
     const tag = tagEl.current!.value.trim(), why = tagProblem(tag);
     if (why) { ui.current.tagHint = why; builderStep(); tagEl.current!.focus(); return; }
+    const cleanup = cleanupEl.current!.checked;
     bdBusy(true);
     try {
       await bdReady();
@@ -232,13 +253,12 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
       b.saved = snap;
       ui.current.tagHint = "";
       termLine("ok", `Saved ${snap.tag} on ${snap.node_id}${snap.size_bytes != null ? ` · ${mib(snap.size_bytes)}` : ""}. A new sandbox forks from it with {"snapshot_tag": "${snap.tag}"}.`);
-      if (cleanupEl.current!.checked) {
-        const id = b.id || "";
-        await deleteQuietly("/v1/sandboxes/" + encodeURIComponent(id));
-        b.id = null; b.token = null; b.cwd = ""; keepBuild(b);
-        termLine("dim", `Deleted the build sandbox ${id}.`);
+      if (cleanup) {
+        b.cleanupPending = true;
+        keepBuild(b);
       }
       onSaved();
+      if (cleanup) await deleteBuild();
     } catch (e) { termLine("bad", errorText(e)); }
     finally { bdBusy(false); }
   };
@@ -253,16 +273,32 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
     finally { bdBusy(false); }
   };
   const again = () => { b.saved = null; termClear(); void builderOptions(); builderStep(); };
+
+  async function deleteBuild(clearTerminal = false) {
+    const id = b.id;
+    if (!id) return;
+    try {
+      await apiDelete("/v1/sandboxes/" + encodeURIComponent(id));
+      clearBuildSandbox();
+      if (clearTerminal) termClear();
+      termLine("dim", `Deleted the build sandbox ${id}.`);
+    } catch (e) {
+      termLine("bad", `Could not delete the build sandbox ${id}: ${errorText(e)}`);
+    }
+  }
+
+  const retryCleanup = async () => {
+    if (!b.cleanupPending || b.running) return;
+    bdBusy(true);
+    try { await deleteBuild(); }
+    finally { bdBusy(false); }
+  };
+
   const discard = async () => {
-    if (!arm("discard")) return;
+    if (b.running || b.cleanupPending || !arm("discard")) return;
     disarm();
     bdBusy(true);
-    try {
-      await deleteQuietly("/v1/sandboxes/" + encodeURIComponent(b.id || ""));
-      termLine("dim", `Deleted the build sandbox ${b.id}. Nothing was saved from it.`);
-      b.id = null; b.token = null; b.cwd = ""; keepBuild(b);
-      termClear();
-    } catch (e) { termLine("bad", errorText(e)); }
+    try { await deleteBuild(true); }
     finally { bdBusy(false); }
   };
   const setFrom = (v: "template" | "snapshot") => {
@@ -276,6 +312,7 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
   // say), and the save bar under it. The terminal's lines are written to it
   // directly, so whether it has any is read from it.
   const live = !!b.id, running = b.running, saved = b.saved;
+  const cleanupPending = b.cleanupPending;
   const termHas = !!termEl.current?.childElementCount;
   const u = ui.current;
   return createPortal(
@@ -283,8 +320,8 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
       <div className={"bdbox" + (!live && !saved && !termHas ? " idle" : "")} role="dialog" aria-modal="true" aria-labelledby="bdTitle">
         <div className="bdhead">
           <div className="bdtitle"><h1 id="bdTitle">Build a snapshot</h1>
-            <div className="bdwho">{live ? <><code>{b.id}</code> on {b.node || "?"} · from {b.base}</> : saved ? `Saved ${saved.tag}` : ""}</div></div>
-          <button className={"btn" + (isArmed("discard") ? " armed" : "")} type="button" hidden={!live} disabled={running} onClick={() => void discard()}>{isArmed("discard") ? "Click again to discard" : "Discard"}</button>
+            <div className="bdwho">{live ? <><code>{b.id}</code> on {b.node || "?"} · from {b.base}{cleanupPending && saved && ` · Saved ${saved.tag}`}</> : saved ? `Saved ${saved.tag}` : ""}</div></div>
+          <button className={"btn" + (isArmed("discard") ? " armed" : "")} type="button" hidden={!live || cleanupPending} disabled={running} onClick={() => void discard()}>{isArmed("discard") ? "Click again to discard" : "Discard"}</button>
           <button className="bdx" type="button" aria-label="Close" onClick={onClose}>×</button>
         </div>
         <div className="bdstart" hidden={live || !!saved}>
@@ -306,20 +343,21 @@ export function BuildSnapshot({ open, onClose, onLive, onSaved }: Props) {
           {/* Clicking anywhere in the output puts you back at the prompt, as a
               terminal does, unless you are selecting text to copy. */}
           <div className="term" ref={termEl} role="log" aria-live="polite" onMouseUp={() => { if (!String(getSelection()) && inEl.current && !inEl.current.disabled) inEl.current.focus(); }}></div>
-          <div className="bdline" hidden={!live}><span className="ps">{prompt(b.cwd)}</span>
-            <textarea ref={inEl} rows={1} spellCheck={false} autoComplete="off" autoCapitalize="off" aria-label="Command" disabled={!live || running} onInput={fitIn} onKeyDown={onKey}></textarea>
+          <div className="bdline" hidden={!live || cleanupPending}><span className="ps">{prompt(b.cwd)}</span>
+            <textarea ref={inEl} rows={1} spellCheck={false} autoComplete="off" autoCapitalize="off" aria-label="Command" disabled={!live || running || cleanupPending} onInput={fitIn} onKeyDown={onKey}></textarea>
             <span className="bdspin" hidden={!running}></span></div>
         </div>
         <div className="bdfoot" hidden={!live && !saved}>
           <input ref={tagEl} type="text" placeholder="Snapshot name, e.g. python-data-v1" spellCheck={false} autoComplete="off" aria-label="Snapshot name"
-            disabled={!live || running} hidden={!live && !!saved}
+            disabled={!live || running || cleanupPending} hidden={!live || cleanupPending}
             onInput={() => { if (u.tagHint) { u.tagHint = ""; builderStep(); } }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } }} />
-          <label className="check" hidden={!live && !!saved}><input type="checkbox" ref={cleanupEl} defaultChecked disabled={!live || running} hidden={!live && !!saved} /> Delete the build sandbox once saved</label>
+          <label className="check" hidden={!live || cleanupPending}><input type="checkbox" ref={cleanupEl} defaultChecked disabled={!live || running || cleanupPending} /> Delete the build sandbox once saved</label>
           <span className="spacer"></span>
           <button className="btn" type="button" hidden={!saved} disabled={running} onClick={() => void fork()}>Fork a sandbox from it</button>
           <button className="btn" type="button" hidden={live || !saved} onClick={again}>Start another</button>
-          <button className="btn primary" type="button" disabled={!live || running} hidden={!live && !!saved} onClick={() => void save()}>Save snapshot</button>
+          <button className="btn primary" type="button" disabled={!live || running || cleanupPending} hidden={!live || cleanupPending} onClick={() => void save()}>Save snapshot</button>
+          <button className="btn primary" type="button" ref={retryEl} disabled={running} hidden={!live || !cleanupPending} onClick={() => void retryCleanup()}>Retry delete sandbox</button>
           <div className="hint" hidden={!u.tagHint}>{u.tagHint}</div>
         </div>
       </div>

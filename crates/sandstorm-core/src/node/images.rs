@@ -19,8 +19,8 @@ use anyhow::{bail, Context, Result};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::io::{Read, Write};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command as Exec, Stdio};
 use std::sync::Arc;
@@ -592,13 +592,33 @@ fn tree_bytes(dir: &Path) -> u64 {
     total
 }
 
+fn install_guest_scripts(rootfs: &Path) -> Result<()> {
+    for (name, contents, mode) in [
+        ("sandstorm-init.sh", INIT, 0o755),
+        ("sandstorm-agent.py", AGENT, 0o644),
+    ] {
+        // Replace the image's directory entry without writing to its inode or link target.
+        let temporary = rootfs.join(format!(".{name}-{}.tmp", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        let installed = (|| -> std::io::Result<()> {
+            file.write_all(contents.as_bytes())?;
+            file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+            std::fs::rename(&temporary, rootfs.join(name))
+        })();
+        if let Err(error) = installed {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
 fn make_ext4(rootfs: &Path, to: &Path) -> Result<()> {
-    std::fs::write(rootfs.join("sandstorm-init.sh"), INIT)?;
-    std::fs::set_permissions(
-        rootfs.join("sandstorm-init.sh"),
-        std::fs::Permissions::from_mode(0o755),
-    )?;
-    std::fs::write(rootfs.join("sandstorm-agent.py"), AGENT)?;
+    install_guest_scripts(rootfs)?;
     let size = tree_bytes(rootfs) / 4 * 5 + DISK_ROOM;
     std::fs::File::create(to)?.set_len(size)?;
     let out = Exec::new("mkfs.ext4")

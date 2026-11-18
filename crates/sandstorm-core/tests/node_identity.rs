@@ -13,12 +13,17 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
 use sandstorm_core::identity::Ca;
 use sandstorm_core::master::{router, MasterOptions, MasterState};
+use sandstorm_core::proto::{Command, PollResponse};
 use sandstorm_core::state::Store;
 use sandstorm_core::tls::{self, PeerCert};
 use tempfile::TempDir;
+use tower::ServiceExt;
 
 struct Harness {
     base: String,
@@ -105,6 +110,42 @@ async fn poll_status(base: &str, node_id: &str) -> u16 {
         .unwrap()
         .status()
         .as_u16()
+}
+
+/// Return only after this authenticated, idle request has entered its hold.
+async fn park_poll(
+    st: Arc<MasterState>,
+    fingerprint: String,
+) -> tokio::task::JoinHandle<axum::response::Response> {
+    let app = router(st.clone()).layer(axum::Extension(PeerCert(Some(fingerprint))));
+    let request = Request::post("/v1/node/poll")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "node_id": "node-a", "observed": [], "hold_ms": 55_000,
+                "free_memory_mib": 1024, "pressure_some_avg10": 0.0,
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let (parked, waiting) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let response = app.oneshot(request);
+        tokio::pin!(response);
+        // With an in-memory body, authentication and the first diff are
+        // synchronous: the first Pending is the long-poll wait.
+        assert!(futures_util::poll!(&mut response).is_pending());
+        parked.send(()).unwrap();
+        response.await.unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .expect("the poll must enter its hold")
+        .unwrap();
+    let node = &st.store().list_nodes().unwrap()[0];
+    assert!(node.connected);
+    assert_eq!(node.free_mib, 1024, "the first diff has recorded health");
+    task
 }
 
 // ---- which node is this -------------------------------------------------
@@ -198,6 +239,98 @@ async fn identity_revoking_stops_the_node_at_once() {
     // The node still holds the files; what changed is that the master stops
     // accepting them. 403, not 401: the refusal can say why.
     assert_eq!(poll_status(&base, "node-a").await, 403);
+}
+
+#[tokio::test]
+async fn identity_revoking_a_parked_poll_keeps_the_node_offline() {
+    let setup = start_with_presented(None).await;
+    let (cert, _) = register(&setup, "node-a").await;
+    let fp = tls::fingerprint_of_pem(&cert).unwrap();
+    setup
+        .st
+        .store()
+        .put_template("python", "rootfs", "{}")
+        .unwrap();
+    let parked = park_poll(setup.st.clone(), fp.clone()).await;
+
+    let revoked = reqwest::Client::new()
+        .post(format!("{}/v1/node/revoke/node-a", setup.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    let connected_after_revoke = setup.st.store().list_nodes().unwrap()[0].connected;
+
+    let response = tokio::time::timeout(Duration::from_secs(5), parked)
+        .await
+        .expect("revocation must wake the held poll")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN, "the held poll");
+    assert!(!connected_after_revoke, "revocation keeps the node offline");
+    assert!(!setup.st.store().list_nodes().unwrap()[0].connected);
+
+    let app = router(setup.st.clone()).layer(axum::Extension(PeerCert(Some(fp))));
+    let response = app
+        .oneshot(
+            Request::post("/v1/node/poll")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "node_id": "node-a", "observed": [], "hold_ms": 0,
+                        "free_memory_mib": 1024, "pressure_some_avg10": 0.0,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN, "a new poll");
+    assert!(!setup.st.store().list_nodes().unwrap()[0].connected);
+
+    let created = reqwest::Client::new()
+        .post(format!("{}/v1/sandboxes", setup.base))
+        .json(&serde_json::json!({ "template": "python" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!setup.st.store().list_nodes().unwrap()[0].connected);
+}
+
+#[tokio::test]
+async fn identity_an_unrevoked_parked_poll_is_woken_with_commands() {
+    let setup = start_with_presented(None).await;
+    let (cert, _) = register(&setup, "node-a").await;
+    let fp = tls::fingerprint_of_pem(&cert).unwrap();
+    setup
+        .st
+        .store()
+        .put_template("python", "rootfs", "{}")
+        .unwrap();
+    let parked = park_poll(setup.st.clone(), fp).await;
+
+    let created = reqwest::Client::new()
+        .post(format!("{}/v1/sandboxes", setup.base))
+        .json(&serde_json::json!({ "template": "python" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created: serde_json::Value = created.json().await.unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(5), parked)
+        .await
+        .expect("creating work must wake the held poll")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let response: PollResponse = serde_json::from_slice(&body).unwrap();
+    assert!(
+        matches!(response.commands.as_slice(), [Command::Create { id, .. }] if id == created["id"].as_str().unwrap())
+    );
+    assert!(setup.st.store().list_nodes().unwrap()[0].connected);
 }
 
 #[tokio::test]

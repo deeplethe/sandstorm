@@ -205,21 +205,22 @@ impl Runsc {
     fn run(&self, args: &[&str], timeout: Duration) -> Result<String> {
         let tmp = self.work_dir.join("tmp");
         std::fs::create_dir_all(&tmp)?;
-        let stem = format!("runsc-{}", std::process::id());
-        let (out_path, err_path) = (
-            tmp.join(format!("{stem}.out")),
-            tmp.join(format!("{stem}.err")),
-        );
-        let out_file = std::fs::File::create(&out_path)?;
-        let err_file = std::fs::File::create(&err_path)?;
+        let stdout = tempfile::NamedTempFile::new_in(&tmp)?;
+        let stderr = tempfile::NamedTempFile::new_in(&tmp)?;
+        // Reopen for independent read and write offsets, then unlink the
+        // paths before spawning so even a timed-out call leaves no files.
+        let stdout_writer = stdout.reopen()?;
+        let stderr_writer = stderr.reopen()?;
+        let stdout_reader = stdout.into_file();
+        let stderr_reader = stderr.into_file();
 
         let mut child = Exec::new(&self.bin)
             .arg("--root")
             .arg(&self.root)
             .args(args)
             .stdin(Stdio::null())
-            .stdout(out_file)
-            .stderr(err_file)
+            .stdout(stdout_writer)
+            .stderr(stderr_writer)
             .spawn()
             .with_context(|| format!("running {} {:?}", self.bin, args))?;
 
@@ -242,15 +243,11 @@ impl Runsc {
             }
         };
 
-        let stdout = std::fs::read_to_string(&out_path).unwrap_or_default();
-        let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
-        std::fs::remove_file(&out_path).ok();
-        std::fs::remove_file(&err_path).ok();
-
         if !status.success() {
+            let stderr = std::io::read_to_string(stderr_reader).unwrap_or_default();
             bail!("{} {:?} failed: {}", self.bin, args, stderr.trim());
         }
-        Ok(stdout)
+        Ok(std::io::read_to_string(stdout_reader).unwrap_or_default())
     }
 }
 
@@ -433,17 +430,20 @@ mod tests {
     use tempfile::TempDir;
 
     /// A `runsc` that logs each subcommand and fails on `fail_on`.
-    ///
-    /// Written by a child, not from here. A test forking on another thread
-    /// while this process holds the file open for writing keeps that
-    /// descriptor until it execs, and running the script then fails with
-    /// ETXTBSY, which looks like `runsc` itself failing.
     fn runsc(dir: &TempDir, fail_on: &str) -> Runsc {
-        let bin = dir.path().join("runsc");
         let script = format!(
             "#!/bin/sh\nshift 2\necho \"$1\" >> {}/calls\n[ \"$1\" != \"{fail_on}\" ]\n",
             dir.path().display()
         );
+        runsc_script(dir, &script)
+    }
+
+    /// Written by a child, not from here. A test forking on another thread
+    /// while this process holds the file open for writing keeps that
+    /// descriptor until it execs, and running the script then fails with
+    /// ETXTBSY, which looks like `runsc` itself failing.
+    fn runsc_script(dir: &TempDir, script: &str) -> Runsc {
+        let bin = dir.path().join("runsc");
         let written = Exec::new("sh")
             .args(["-c", "printf %s \"$1\" > \"$2\" && chmod 755 \"$2\"", "sh"])
             .arg(script)
@@ -462,6 +462,68 @@ mod tests {
         std::fs::read_to_string(dir.path().join("calls"))
             .unwrap()
             .replace('\n', " ")
+    }
+
+    #[test]
+    fn concurrent_runsc_calls_keep_their_own_output() {
+        let dir = TempDir::new().unwrap();
+        let rt = runsc_script(
+            &dir,
+            r#"#!/bin/sh
+shift 2
+cd "$2" || exit 1
+case "$1" in
+    first)
+        printf 'first stdout\n'
+        printf 'first stderr\n' >&2
+        : > first-ready
+        while [ ! -f second-ready ]; do sleep 0.01; done
+        ;;
+    second)
+        printf 'second stdout\n'
+        printf 'second stderr\n' >&2
+        : > second-ready
+        while [ ! -f first-returned ]; do sleep 0.01; done
+        exit 1
+        ;;
+esac
+"#,
+        );
+        let work_dir = dir.path().to_str().unwrap();
+        let timeout = Duration::from_secs(10);
+        // The second command writes before the first returns. It stays alive
+        // until the first caller has read its output.
+        let (first, second) = std::thread::scope(|scope| {
+            let second = scope.spawn(|| {
+                let ready = dir.path().join("first-ready");
+                let deadline = Instant::now() + timeout;
+                while !ready.exists() {
+                    assert!(Instant::now() < deadline, "first command did not write");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                rt.run(&["second", work_dir], timeout)
+            });
+            let first = rt.run(&["first", work_dir], timeout);
+            std::fs::write(dir.path().join("first-returned"), []).unwrap();
+            (first, second.join().unwrap())
+        });
+
+        assert_eq!(first.unwrap(), "first stdout\n");
+        let err = second.unwrap_err().to_string();
+        assert!(err.ends_with("failed: second stderr"), "{err}");
+    }
+
+    #[test]
+    fn a_timed_out_runsc_call_leaves_no_output_files() {
+        let dir = TempDir::new().unwrap();
+        let rt = runsc_script(&dir, "#!/bin/sh\nexec sleep 30\n");
+        let err = rt.run(&["delete"], Duration::from_millis(50)).unwrap_err();
+
+        assert!(err.to_string().contains("did not finish within"), "{err}");
+        assert!(std::fs::read_dir(dir.path().join("tmp"))
+            .unwrap()
+            .next()
+            .is_none());
     }
 
     #[test]
