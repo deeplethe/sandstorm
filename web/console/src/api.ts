@@ -60,8 +60,3 @@ export async function apiDelete(path: string): Promise<void> {
     throw new Error(m || String(r.status));
   }
 }
-
-// A DELETE whose answer nobody waits on: tidying up after a build.
-export function deleteQuietly(path: string): Promise<Response> {
-  return fetch(path, { method: "DELETE", headers: { authorization: "Bearer " + auth.token } });
-}
