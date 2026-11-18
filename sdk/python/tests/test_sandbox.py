@@ -11,6 +11,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -27,6 +28,7 @@ class FakeMaster:
     def __init__(self):
         self.requests = []
         self.sandboxes = {}
+        self.snapshots = set()
         self.reports_until_running = 0
         self.last_error = None
         self.error_attempts = 0
@@ -62,11 +64,19 @@ class FakeMaster:
         ).start()
 
     def answer(self, method, path, body, headers):
-        parts = path.split("/")[2:]
+        parts = urlsplit(path).path.split("/")[2:]
         if method == "POST" and parts == ["sandboxes"]:
             return self.create(body)
         if method == "GET" and parts == ["templates"]:
             return 200, ["python"]
+        if method == "GET" and parts == ["snapshots"]:
+            return 200, [{"tag": tag} for tag in sorted(self.snapshots)]
+        if method == "DELETE" and len(parts) == 2 and parts[0] == "snapshots":
+            tag = unquote(parts[1])
+            if tag not in self.snapshots:
+                return 404, {"error": f"no snapshot {tag}"}
+            self.snapshots.remove(tag)
+            return 204, None
         sandbox_id = parts[1]
         sb = self.sandboxes.get(sandbox_id)
         if sb is None:
@@ -365,6 +375,24 @@ def test_connect_to_nothing_raises(controller):
 
 
 # ---- the Controller's own calls ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tag", "other_tag"),
+    [
+        ("checkpoint#draft", "checkpoint"),
+        ("checkpoint?draft", "checkpoint"),
+        ("checkpoint%23draft", "checkpoint#draft"),
+        ("周报 #1", "周报"),
+        ("checkpoint-draft", "checkpoint"),
+    ],
+)
+def test_delete_snapshot_removes_only_the_requested_tag(master, controller, tag, other_tag):
+    master.snapshots.update([tag, other_tag])
+
+    controller.delete_snapshot(tag)
+
+    assert controller.list_snapshots() == [{"tag": other_tag}]
 
 
 def test_branch_sends_the_tag_and_nothing_else(master, controller):
