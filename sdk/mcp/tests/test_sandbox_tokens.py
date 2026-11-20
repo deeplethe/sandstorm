@@ -24,8 +24,11 @@ def requests(monkeypatch):
             if request.headers.get('x-sandstorm-sandbox-token') != f'{sandbox_id}-token':
                 return httpx.Response(401, json={'error': 'unauthorized'})
             count = sum(r.url.path == request.url.path for r in recorded)
+            args = json.loads(request.content).get('args', []) if request.url.path.endswith('/exec') else []
+            watching_log = args[:2] == ['sh', '-c'] and args[3:4] == ['wait_for_text']
             return httpx.Response(200, json={'stdout': 'ready' if count > 1 else 'pending',
-                                           'stderr': '', 'exit_code': 0, 'result': '4'})
+                                           'stderr': '', 'exit_code': int(watching_log and count == 1),
+                                           'result': '4'})
         assert 'x-sandstorm-sandbox-token' not in request.headers
         return httpx.Response(200, json=[])
 
