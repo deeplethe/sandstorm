@@ -377,14 +377,14 @@ fn settle_restores(rt: &Runtime, wake: &Wakeups) {
 /// ask for it to be destroyed, and the slot it held is handed on while its
 /// veth still answers for the address. Once it is gone, a sandbox the
 /// master still wants is simply not here, and the next diff creates it
-/// again: a crashed sandbox restarts, from its template.
+/// again: a crashed sandbox restarts, from its detached archive if it has one.
 fn reap_dead(rt: &Runtime, wake: &Wakeups) {
     for id in rt.dead(DEAD_AFTER) {
         let lock = wake.lock(&id);
         let Some(_held) = lock.try_lock() else {
             continue;
         };
-        match rt.destroy_with_net(&id, None) {
+        match rt.reap_with_net(&id) {
             Ok(()) => tracing::warn!(sandbox = %id, "cleared away a sandbox that had died"),
             Err(e) => {
                 tracing::warn!(sandbox = %id, error = %format!("{e:#}"), "could not clear away a sandbox that had died")
